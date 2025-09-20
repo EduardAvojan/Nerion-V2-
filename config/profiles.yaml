@@ -1,0 +1,119 @@
+profiles:
+  fast:
+    policy: fast
+    reviewer:
+      strict: false
+      style_max: 9999
+      externals:
+        ruff: false
+        pydocstyle: false
+        mypy: false
+    runner:
+      inprocess_pytest: false
+      simulation_first: false
+      healers: false
+      coverage_assist: false
+    timeouts:
+      pytest: 300
+      healthcheck: 60
+    concurrency:
+      apply_workers: 4
+    net:
+      allow: true
+      domains: []
+    llm:
+      chat:
+        model: deepseek-r1:14b
+      coder:
+        backend: ollama
+        model: deepseek-coder-v2
+
+  balanced:
+    policy: balanced
+    reviewer:
+      strict: false
+      style_max: 200
+      externals:
+        ruff: false
+        pydocstyle: false
+        mypy: false
+    runner:
+      inprocess_pytest: false
+      simulation_first: false
+      healers: true
+      coverage_assist: false
+    timeouts:
+      pytest: 420
+      healthcheck: 60
+    concurrency:
+      apply_workers: 2
+    net:
+      allow: true
+      domains: []
+    llm:
+      chat:
+        model: deepseek-r1:14b
+      coder:
+        backend: ollama
+        model: deepseek-coder-v2
+        base_url: http://localhost:11434
+
+  safe:
+    policy: safe
+    reviewer:
+      strict: true
+      style_max: 0
+      externals:
+        ruff: true
+        pydocstyle: true
+        mypy: true
+    runner:
+      inprocess_pytest: false
+      simulation_first: true
+      healers: true
+      coverage_assist: true
+    timeouts:
+      pytest: 900
+      healthcheck: 120
+    concurrency:
+      apply_workers: 1
+    net:
+      allow: true
+      domains: []
+    llm:
+      chat:
+        model: deepseek-r1:14b
+      coder:
+        backend: ollama
+        model: deepseek-coder-v2
+        base_url: http://localhost:11434
+
+  bench-recommended:
+    policy: fast
+    reviewer:
+      strict: false
+      style_max: 9999
+      externals:
+        ruff: false
+        pydocstyle: false
+        mypy: false
+    runner:
+      inprocess_pytest: true
+      simulation_first: false
+      healers: false
+      coverage_assist: true
+    timeouts:
+      pytest: 600
+      healthcheck: 60
+    concurrency:
+      apply_workers: 4
+    net:
+      allow: true
+      domains: []
+    llm:
+      chat:
+        model: deepseek-r1:14b
+      coder:
+        backend: ollama
+        model: deepseek-coder-v2
+        base_url: http://localhost:11434

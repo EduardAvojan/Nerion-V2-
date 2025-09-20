@@ -1,0 +1,75 @@
+tools:
+  # Time & Date Tools
+  - name: get_current_time
+    description: "Get the current local system time"
+    requires_network: false
+
+  - name: get_current_date
+    description: "Get the current local system date"
+    requires_network: false
+
+  # Memory Management Tools
+  - name: recall_memory
+    description: "Search the agent's long-term memory for a specific topic or fact"
+    requires_network: false
+
+  - name: pin_memory
+    description: "Save important information to long-term memory"
+    requires_network: false
+
+  # Web Knowledge Tools
+  - name: site_query
+    description: "Read and analyze the content of a specific website URL"
+    requires_network: true
+    args:
+      url: "The full URL to analyze"
+      query: "The specific question to answer from the website"
+
+  - name: web_search
+    description: "Search the web for general knowledge, news, or current information"
+    requires_network: true
+    args:
+      query: "The search query or question to answer"
+
+  # System Tools
+  - name: run_healthcheck
+    description: "Check if all agent systems are functioning properly"
+    requires_network: false
+
+  - name: run_diagnostics
+    description: "Run a quick local diagnostics summary (CPU/MEM presence)"
+    requires_network: false
+
+  - name: list_plugins
+    description: "List available plugins from the allowlist"
+    requires_network: false
+
+  - name: run_pytest_smoke
+    description: "Run pytest smoke tests and report summary"
+    requires_network: false
+
+  # Local File Utilities
+  - name: read_file
+    description: "Read a text file from within the repository (safely jailed)"
+    requires_network: false
+    args:
+      path: "Relative or absolute path (must be inside repo)"
+
+  - name: summarize_file
+    description: "Summarize the contents of a local text file"
+    requires_network: false
+    args:
+      path: "Relative or absolute path (must be inside repo)"
+
+  - name: self_code
+    description: "Modify or upgrade the agent's own code with specific improvements"
+    requires_network: false
+
+  # Voice Control
+  - name: toggle_speech
+    description: "Turn the agent's voice and microphone on or off"
+    requires_network: false
+
+  - name: set_mute_state
+    description: "Mute or unmute the agent's voice output"
+    requires_network: false

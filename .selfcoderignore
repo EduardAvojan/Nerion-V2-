@@ -1,0 +1,40 @@
+# === Folders to always ignore ===
+.git/
+.venv/
+__pycache__/
+.pytest_cache/
+_htmlcov/
+.mypy_cache/
+.backups/
+_archive/
+backups/
+dist/
+build/
+coverage/
+tmp/
+cache/
+
+# === Frontend build/deps ===
+node_modules/
+**/node_modules/
+*.lock
+*.log
+
+# === App UI cache/build ===
+app/ui/holo-app/node_modules/
+app/ui/holo-app/.parcel-cache/
+app/ui/holo-app/dist/
+
+# === Large or generated data ===
+*.sqlite3
+*.bin
+*.tar.gz
+*.zip
+*.pyc
+.DS_Store
+memory_db.json
+jarvis_memory/
+.DS_Store
+pytest_cache/**
+.ruff_cache/**
+*.log

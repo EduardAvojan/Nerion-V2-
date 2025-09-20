@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "updated": "2025-09-17",
+  "description": "IPC contract between the Nerion Python runtime and the Electron HOLO UI.",
+  "outbound": [
+    {
+      "type": "state",
+      "summary": "Full snapshot of the agent session state.",
+      "payload": {
+        "mode": "idle | listening | speaking | busy",
+        "muted": "boolean",
+        "connection": "offline | gated | online",
+        "profile": "active persona/profile name",
+        "ts": "unix epoch milliseconds"
+      }
+    },
+    {
+      "type": "thought_step",
+      "summary": "Planner/analysis token describing the next internal action.",
+      "payload": {
+        "id": "monotonic step id",
+        "title": "short label for the step",
+        "detail": "optional longer description",
+        "status": "pending | active | complete | failed",
+        "ts": "epoch milliseconds"
+      }
+    },
+    {
+      "type": "confidence",
+      "summary": "Confidence halo update for the current response or plan.",
+      "payload": {
+        "score": "0-1 float",
+        "explain": [
+          "list of driver strings, e.g. 'tests matched', 'AST safe'"
+        ]
+      }
+    },
+    {
+      "type": "progress",
+      "summary": "Long-running action progress (subset tests, patch apply, web fetch, etc.).",
+      "payload": {
+        "id": "stable progress id",
+        "label": "human friendly label",
+        "percent": "0-100 float",
+        "stage": "optional textual stage name"
+      }
+    },
+    {
+      "type": "action_log",
+      "summary": "Append-only stream of recent self-coding or ops actions.",
+      "payload": {
+        "id": "action identifier",
+        "kind": "plan | apply | revert | test | web | memory",
+        "summary": "one line description",
+        "status": "pending | ok | warn | error",
+        "ts": "epoch ms"
+      }
+    },
+    {
+      "type": "artifact_list",
+      "summary": "Current artifacts relevant to the turn (docs, diffs, datasets).",
+      "payload": {
+        "items": [
+          {
+            "id": "stable artifact id",
+            "title": "card header",
+            "kind": "doc | diff | search | memory | report",
+            "summary": "short description",
+            "meta": "arbitrary metadata (citations, tokens, etc.)"
+          }
+        ]
+      }
+    },
+    {
+      "type": "status_chip",
+      "summary": "System status indicator (network gate, policy, offline).",
+      "payload": {
+        "label": "chip label",
+        "severity": "info | success | warning | danger",
+        "detail": "optional tooltip text"
+      }
+    },
+    {
+      "type": "speak_start",
+      "summary": "Signal that TTS audio has started.",
+      "payload": {
+        "utterance_id": "optional string"
+      }
+    },
+    {
+      "type": "speak_stop",
+      "summary": "Signal that TTS audio has stopped.",
+      "payload": {
+        "utterance_id": "optional string"
+      }
+    },
+    {
+      "type": "word",
+      "summary": "Incremental TTS progress token for visualizers.",
+      "payload": {
+        "token": "string representing the spoken chunk",
+        "length": "character length (optional)"
+      }
+    }
+  ],
+  "inbound": [
+    {
+      "type": "ptt",
+      "summary": "Press-to-talk toggles from UI interactions or hotkeys.",
+      "payload": {
+        "state": "pressed | released"
+      }
+    },
+    {
+      "type": "chat",
+      "summary": "User-submitted chat text.",
+      "payload": {
+        "text": "utterance",
+        "speak": "boolean indicating if TTS should echo back"
+      }
+    },
+    {
+      "type": "override",
+      "summary": "Force set agent state (mute, sleep, resume).",
+      "payload": {
+        "key": "mute | sleep | wake | cancel",
+        "value": "boolean or string depending on key"
+      }
+    },
+    {
+      "type": "net",
+      "summary": "Network gate decision from UI consent.",
+      "payload": {
+        "decision": "allow_once | always_allow | deny",
+        "target": "domain or capability string"
+      }
+    },
+    {
+      "type": "patch",
+      "summary": "Diff or patch related commands.",
+      "payload": {
+        "action": "review | apply | safe_apply | undo",
+        "plan_id": "optional plan identifier",
+        "files": ["optional list of file paths"]
+      }
+    },
+    {
+      "type": "open_artifact",
+      "summary": "Request to open an artifact detail panel.",
+      "payload": {
+        "id": "artifact id",
+        "mode": "view | speak | copy"
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "nerion-holo",
+  "version": "0.1.0",
+  "description": "Electron shell for Nerion's futuristic UI.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "keywords": ["nerion", "electron", "ui"],
+  "author": "Nerion Team",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^29.3.0"
+  }
+}

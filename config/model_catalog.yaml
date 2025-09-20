@@ -1,0 +1,29 @@
+catalog:
+  ollama:
+    deepseek-coder-v2:
+      pull: deepseek-coder-v2
+    qwen2.5-coder:
+      pull: qwen2.5-coder
+    starcoder2:
+      pull: starcoder2
+    codellama:
+      pull: codellama
+  llama_cpp:
+    codellama-7b-instruct:
+      url: https://huggingface.co/TheBloke/CodeLlama-7B-Instruct-GGUF/resolve/main/codellama-7b-instruct.Q4_0.gguf
+      filename: codellama-7b-instruct.Q4_0.gguf
+    deepseek-coder-6.7b-instruct:
+      url: https://huggingface.co/bartowski/DeepSeek-Coder-6.7B-instruct-GGUF/resolve/main/DeepSeek-Coder-6.7B-instruct-Q4_K_M.gguf
+      filename: DeepSeek-Coder-6.7B-instruct-Q4_K_M.gguf
+  vllm:
+    deepseek-coder-6.7b-instruct:
+      repo: deepseek-ai/deepseek-coder-6.7b-instruct
+    qwen2.5-coder-7b:
+      repo: Qwen/Qwen2.5-Coder-7B
+    starcoder2-7b:
+      repo: bigcode/starcoder2-7b
+  exllamav2:
+    codellama-7b-instruct-gptq:
+      repo: TheBloke/CodeLlama-7B-Instruct-GPTQ
+      note: exllamav2 expects GPTQ/AWQ formats; ensure compatibility.
+

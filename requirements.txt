@@ -1,0 +1,23 @@
+# chromadb
+# Minimal runtime (extend as you add features)
+# Optional: speech + vector memory (comment out until needed)
+# TTS
+# vosk
+chromadb==0.5.3
+langchain-ollama==0.1.1
+langchain==0.2.14
+libcst
+numpy==1.26.4
+pyaudio==0.2.14
+pylint
+PyQt5==5.15.10
+pytest
+pyttsx3==2.90
+pywebview==4.4.1
+PyYAML
+ruff
+sentence-transformers==2.7.0
+SpeechRecognition==3.10.4
+pygame
+websocket-client
+pynput>=1.7.0

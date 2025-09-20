@@ -1,0 +1,16 @@
+
+
+tools:
+  - name: read_url
+    description: Fetch and summarize a web page (NetworkGate enforced)
+    requires_network: true
+    params:
+      - { name: url, type: str, required: true, description: "HTTP/HTTPS URL" }
+
+  - name: rename_symbol
+    description: Refactor a symbol across the repo; preview first
+    requires_network: false
+    params:
+      - { name: old, type: str, required: true }
+      - { name: new, type: str, required: true }
+      - { name: simulate, type: bool, required: false, description: "preview only" }

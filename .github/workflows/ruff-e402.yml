@@ -1,0 +1,25 @@
+name: Lint (Ruff E402)
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  ruff-e402:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ruff
+        run: pip install ruff==0.5.6
+
+      - name: Run Ruff (E402 only)
+        run: ruff check --select E402 --statistics .

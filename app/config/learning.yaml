@@ -1,0 +1,22 @@
+
+
+# Phase-2 Proactive Learning Policy (Incubator)
+# NOTE: The default loader looks for "config/learning.yaml" at repo root.
+# If you keep this file under app/config/, either move/copy it to config/ or
+# adjust the loader path accordingly.
+
+readiness:
+  # Minimum number of examples since last evolution
+  min_examples: 300
+  # Minimum success rate across those examples (0..1)
+  min_success_rate: 0.70
+  # Minimum days since the last evolution to avoid frequent updates
+  min_days_since_last: 14
+  # Require diversity: at least N unique intents in the window
+  min_unique_intents: 5
+  # Optional per-intent weights (1.0 = neutral). Leave empty for uniform.
+  intent_weights: {}
+
+# Paths used by the proactive engine
+notebook_path: out/experience/log.jsonl
+state_path: out/learning/state.json

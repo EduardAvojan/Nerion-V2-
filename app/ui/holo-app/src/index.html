@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nerion HOLO</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+        <div class="ambient" aria-hidden="true">
+          <div class="ambient__stars"></div>
+          <div class="ambient__gradient" id="ambientGradient"></div>
+          <div class="ambient__grid"></div>
+          <div class="ambient__scan"></div>
+          <div class="ambient__glimmer" id="ambientGlimmer"></div>
+        </div>
+
+      <aside class="rail rail--left">
+        <header class="rail__title">Recent actions</header>
+        <div class="rail__timeline" id="actionTimeline"></div>
+      </aside>
+
+      <main class="stage" id="stage">
+        <div class="mode-toggle" id="modeToggle" role="tablist" aria-label="Interaction mode">
+          <button class="mode-toggle__button is-active" data-mode="talk" role="tab" aria-selected="true">Talk</button>
+          <button class="mode-toggle__button" data-mode="chat" role="tab" aria-selected="false">Chat</button>
+        </div>
+        <section class="halo" id="halo">
+          <div class="halo__ring halo__ring--outer"></div>
+          <div class="halo__ring halo__ring--inner"></div>
+          <div class="halo__pulse" id="haloPulse"></div>
+          <p class="halo__state" id="haloState">LISTENING</p>
+        </section>
+
+        <section class="data-capsule" id="dataCapsule">
+          <header class="data-capsule__header">
+            <div>
+              <p class="data-capsule__title">Signal Highlights</p>
+              <p class="data-capsule__subtitle" id="capsuleSubtitle">Trend synthesis in progress…</p>
+            </div>
+            <div class="confidence-meter" id="confidenceMeter">
+              <span class="confidence-meter__value" id="confidenceValue">—</span>
+              <span class="confidence-meter__label">confidence</span>
+            </div>
+          </header>
+          <div class="data-capsule__body">
+            <div class="spark" id="sparkline"></div>
+            <dl class="data-capsule__stats" id="metricList"></dl>
+          </div>
+        </section>
+
+        <section class="conversation" id="conversationPanel">
+          <header class="conversation__header">Conversation</header>
+          <div class="conversation__scroller" id="conversationScroll" aria-live="polite">
+            <div class="conversation__empty" id="conversationEmpty">No messages yet.</div>
+            <div class="conversation__list" id="conversationList"></div>
+          </div>
+          <form class="conversation__form" id="chatForm" autocomplete="off">
+            <label class="visually-hidden" for="chatInput">Type a message</label>
+            <div class="input-pill">
+              <input class="conversation__input" id="chatInput" name="chat" type="text" placeholder="Summarize the meeting notes" />
+              <button class="input-pill__send" id="sendButton" type="submit">Send</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="memory" id="memoryPanel">
+          <header class="memory__header">
+            <div>
+              <span class="memory__title">Memory</span>
+              <span class="memory__subtitle">Session highlights promoted by the agent</span>
+            </div>
+            <div class="memory__actions">
+              <button class="memory__action" id="memoryDrawerOpen" type="button">Open drawer</button>
+            </div>
+          </header>
+          <div class="memory__chips" id="memoryChips"></div>
+          <p class="memory__empty" id="memoryEmpty">No session memories yet.</p>
+        </section>
+
+        <section class="artifacts" id="artifactsPanel">
+          <header class="artifacts__header">
+            <div>
+              <span class="artifacts__title">Artifacts</span>
+              <span class="artifacts__count" id="artifactCount">0 items</span>
+            </div>
+            <div class="artifacts__actions">
+              <button class="artifacts__action" id="artifactRefresh" type="button">Refresh</button>
+              <button class="artifacts__action" id="artifactSpeak" type="button">Speak summary</button>
+            </div>
+          </header>
+          <div class="artifacts__content">
+            <div class="artifacts__grid" id="artifactGrid"></div>
+            <aside class="artifact-detail" id="artifactDetail" aria-live="polite">
+              <p class="artifact-detail__title" id="artifactDetailTitle">No artifact selected</p>
+              <p class="artifact-detail__summary" id="artifactDetailSummary">Incoming research, code diffs, and notes will appear here.</p>
+              <div class="artifact-detail__metrics" id="artifactDetailMetrics"></div>
+              <div class="artifact-detail__citations">
+                <p class="artifact-detail__citations-label">Citations</p>
+                <ul class="artifact-detail__citations-list" id="artifactDetailCitations"></ul>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="upgrade" id="upgradePanel">
+          <header class="upgrade__header">
+            <div>
+              <span class="upgrade__title">Upgrade lane</span>
+              <span class="upgrade__subtitle">Self-coded repair and rollout offers</span>
+            </div>
+            <div class="upgrade__actions">
+              <button class="upgrade__action" id="upgradeRefresh" type="button">Refresh</button>
+              <button class="upgrade__action" id="upgradeClear" type="button">Clear</button>
+            </div>
+          </header>
+          <div class="upgrade__offers" id="upgradeOffers"></div>
+          <div class="upgrade__plan" id="upgradePlan" hidden>
+            <header class="upgrade-plan__header">
+              <div>
+                <p class="upgrade-plan__title" id="upgradePlanTitle">Plan summary</p>
+                <p class="upgrade-plan__meta" id="upgradePlanMeta">Select an offer to view the plan.</p>
+              </div>
+              <div class="upgrade-plan__actions">
+                <button class="upgrade-plan__action" data-action="preview" type="button">Preview diff</button>
+                <button class="upgrade-plan__action" data-action="safe_apply" type="button">Safe apply</button>
+                <button class="upgrade-plan__action" data-action="force_apply" type="button">Force apply</button>
+                <button class="upgrade-plan__action" data-action="dismiss" type="button">Dismiss</button>
+              </div>
+            </header>
+            <div class="upgrade-plan__body">
+              <ul class="upgrade-plan__steps" id="upgradePlanSteps"></ul>
+              <div class="upgrade-plan__candidates" id="upgradePlanCandidates"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="health" id="healthPanel">
+          <header class="health__header">
+            <div>
+              <span class="health__title">Health Dashboard</span>
+              <span class="health__subtitle">Snapshot of the current run</span>
+            </div>
+            <div class="health__actions">
+              <button class="health__action" id="runHealthcheck" type="button">Run healthcheck</button>
+              <button class="health__action" id="clearHealthLog" type="button">Clear log</button>
+            </div>
+          </header>
+          <div class="health__grid" id="healthTiles">
+            <article class="health-tile" data-tile="voice">
+              <header class="health-tile__header">
+                <span class="health-tile__label">Voice Stack</span>
+                <span class="health-tile__status" id="healthVoiceStatus">—</span>
+              </header>
+              <p class="health-tile__value" id="healthVoiceValue">Idle</p>
+              <p class="health-tile__note" id="healthVoiceNote">Awaiting metrics…</p>
+            </article>
+            <article class="health-tile" data-tile="network">
+              <header class="health-tile__header">
+                <span class="health-tile__label">Network Gate</span>
+                <span class="health-tile__status" id="healthNetStatus">—</span>
+              </header>
+              <p class="health-tile__value" id="healthNetValue">Offline</p>
+              <p class="health-tile__note" id="healthNetNote">Activity not yet captured.</p>
+            </article>
+            <article class="health-tile" data-tile="coverage">
+              <header class="health-tile__header">
+                <span class="health-tile__label">Coverage</span>
+                <span class="health-tile__status" id="healthCovStatus">—</span>
+              </header>
+              <p class="health-tile__value" id="healthCovValue">—%</p>
+              <p class="health-tile__note" id="healthCovNote">Waiting for report.</p>
+            </article>
+            <article class="health-tile" data-tile="errors">
+              <header class="health-tile__header">
+                <span class="health-tile__label">Errors</span>
+                <span class="health-tile__status" id="healthErrStatus">—</span>
+              </header>
+              <p class="health-tile__value" id="healthErrValue">0</p>
+              <p class="health-tile__note" id="healthErrNote">No errors logged.</p>
+            </article>
+          </div>
+          <div class="health__log" id="healthLog"></div>
+        </section>
+
+        <section class="settings" id="settingsPanel">
+          <header class="settings__header">
+            <div>
+              <span class="settings__title">Settings</span>
+              <span class="settings__subtitle">Voice, input, and privacy controls</span>
+            </div>
+            <div class="settings__actions">
+              <button class="settings__action" id="settingsApply" type="button">Apply</button>
+              <button class="settings__action" id="settingsReset" type="button">Reset</button>
+            </div>
+          </header>
+          <div class="settings__content">
+            <div class="settings__column">
+              <label class="settings-field">
+                <span class="settings-field__label">Voice backend</span>
+                <select id="settingsVoiceBackend" class="settings-field__input"></select>
+              </label>
+              <label class="settings-field">
+                <span class="settings-field__label">Voice rate</span>
+                <input id="settingsVoiceRate" class="settings-field__input" type="number" min="80" max="280" step="5" />
+              </label>
+              <label class="settings-field">
+                <span class="settings-field__label">Device</span>
+                <select id="settingsDevice" class="settings-field__input"></select>
+              </label>
+            </div>
+            <div class="settings__column">
+              <label class="settings-field">
+                <span class="settings-field__label">PTT hotkey</span>
+                <button id="settingsHotkey" class="settings-field__button" type="button">Capture</button>
+              </label>
+              <label class="settings-field settings-field--toggle">
+                <span class="settings-field__label">Always offline</span>
+                <input id="settingsOffline" type="checkbox" />
+              </label>
+              <label class="settings-field settings-field--toggle">
+                <span class="settings-field__label">Auto-speak summaries</span>
+                <input id="settingsAutospeak" type="checkbox" />
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="learning" id="learningPanel">
+          <header class="learning__header">
+            <div>
+              <span class="learning__title">Learning timeline</span>
+              <span class="learning__subtitle">Auto-preferences and tool adjustments</span>
+            </div>
+            <div class="learning__actions">
+              <button class="learning__action" id="learningRefresh" type="button">Refresh</button>
+              <button class="learning__action" id="learningClear" type="button">Clear</button>
+            </div>
+          </header>
+          <div class="learning__timeline" id="learningTimeline"></div>
+          <aside class="learning-detail" id="learningDetail" hidden>
+            <header class="learning-detail__header">
+              <p class="learning-detail__title" id="learningDetailTitle">Preference detail</p>
+              <div class="learning-detail__actions">
+                <button class="learning-detail__action" data-action="approve" type="button">Approve</button>
+                <button class="learning-detail__action" data-action="revert" type="button">Revert</button>
+                <button class="learning-detail__action" data-action="scope" type="button">Adjust scope</button>
+              </div>
+            </header>
+            <div class="learning-detail__body">
+              <p class="learning-detail__summary" id="learningDetailSummary">Select an event to inspect its impact.</p>
+              <ul class="learning-detail__meta" id="learningDetailMeta"></ul>
+              <div class="learning-detail__diff" id="learningDetailDiff"></div>
+            </div>
+          </aside>
+        </section>
+      </main>
+
+      <aside class="panel panel--right" id="thoughtPanel">
+        <header class="panel__header">
+          <span>Thought Process</span>
+          <div class="panel__actions">
+            <button class="panel__action" id="toggleThoughtDetails" type="button">Details</button>
+            <button class="panel__action" id="resetThoughts" type="button">Clear</button>
+          </div>
+        </header>
+        <ol class="thought-ribbon" id="thoughtRibbon"></ol>
+        <section class="explain" id="explainability">
+          <h3 class="explain__title">Explainability</h3>
+          <ul class="explain__list" id="explainList"></ul>
+        </section>
+
+        <section class="patch-panel" id="patchPanel" hidden>
+          <header class="patch-panel__header">
+            <span>Patch Review</span>
+            <div class="patch-panel__actions">
+              <button class="patch-panel__action" data-action="gate">Gate</button>
+              <button class="patch-panel__action patch-panel__action--primary" data-action="safe-apply">Safe Apply</button>
+            </div>
+          </header>
+          <div class="patch-panel__tabs" role="tablist">
+            <button class="patch-panel__tab is-active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+            <button class="patch-panel__tab" data-tab="diff" role="tab" aria-selected="false">Diff</button>
+            <button class="patch-panel__tab" data-tab="findings" role="tab" aria-selected="false">Findings</button>
+          </div>
+          <div class="patch-panel__body">
+            <div class="patch-panel__overview is-active" data-panel="overview">
+              <p class="patch-panel__label">Summary</p>
+              <p class="patch-panel__text" id="patchSummary">No patch selected.</p>
+              <div class="patch-panel__meta" id="patchMeta"></div>
+            </div>
+            <div class="patch-panel__diff" data-panel="diff">
+              <div class="diff-view">
+                <div class="diff-view__header">
+                  <span class="diff-view__file" id="diffFile">—</span>
+                  <div class="diff-view__tools">
+                    <button class="diff-view__toggle" data-toggle="side-by-side">Side-by-side</button>
+                    <button class="diff-view__toggle" data-toggle="unified">Unified</button>
+                  </div>
+                </div>
+                <div class="diff-view__pane diff-view__pane--left" id="diffLeft"></div>
+                <div class="diff-view__pane diff-view__pane--right" id="diffRight"></div>
+              </div>
+              <div class="hunk-controls">
+                <label class="hunk-controls__label">Hunks</label>
+                <div class="hunk-controls__list" id="hunkList"></div>
+              </div>
+            </div>
+            <div class="patch-panel__findings" data-panel="findings">
+              <div class="findings-header">
+                <span class="findings-header__title">Gate Findings</span>
+                <span class="findings-header__risk" id="gateRisk">No risk</span>
+              </div>
+              <ul class="findings-list" id="findingsList"></ul>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <footer class="suggest" id="suggestBar">
+        <button class="suggest__button" id="suggestPrimary" type="button"></button>
+        <div class="suggest__alt" id="suggestAlt"></div>
+      </footer>
+
+      <div class="toast hide" id="toast"></div>
+
+      <div class="memory-drawer" id="memoryDrawer" hidden>
+        <div class="memory-drawer__backdrop" id="memoryDrawerBackdrop"></div>
+        <div class="memory-drawer__content" role="dialog" aria-modal="true" aria-labelledby="memoryDrawerTitle">
+          <header class="memory-drawer__header">
+            <div>
+              <h2 class="memory-drawer__title" id="memoryDrawerTitle">Memory drawer</h2>
+              <p class="memory-drawer__subtitle">Filter between session, long-term, and pinned facts.</p>
+            </div>
+            <button class="memory-drawer__close" id="memoryDrawerClose" type="button" aria-label="Close memory drawer">×</button>
+          </header>
+          <div class="memory-drawer__controls">
+            <div class="memory-drawer__filters" id="memoryDrawerFilters">
+              <button class="memory-drawer__filter is-active" data-scope="session" type="button">Session</button>
+              <button class="memory-drawer__filter" data-scope="long" type="button">Long</button>
+              <button class="memory-drawer__filter" data-scope="pinned" type="button">Pinned</button>
+              <button class="memory-drawer__filter" data-scope="expiring" type="button">Expiring</button>
+            </div>
+            <input class="memory-drawer__search" id="memoryDrawerSearch" type="search" placeholder="Search memories" />
+          </div>
+          <div class="memory-drawer__list" id="memoryDrawerList"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="renderer.js" defer></script>
+  </body>
+</html>

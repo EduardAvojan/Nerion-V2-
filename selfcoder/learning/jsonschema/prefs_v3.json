@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Nerion Learning Prefs v3",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "integer", "const": 3},
+    "tool_success_rate": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+    },
+    "tool_sample_weight": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0.0}
+    },
+    "tool_success_weight": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0.0}
+    },
+    "tool_success_rate_global": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+    },
+    "tool_success_weight_global": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0.0}
+    },
+    "tool_success_rate_by_intent": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+      }
+    },
+    "tool_sample_weight_by_intent": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {"type": "number", "minimum": 0.0}
+      }
+    },
+    "tool_success_weight_by_intent": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {"type": "number", "minimum": 0.0}
+      }
+    },
+    "personalization": {"type": "object"},
+    "experiments": {"type": "object"},
+    "stats": {
+      "type": "object",
+      "properties": {
+        "successes": {"type": "integer", "minimum": 0},
+        "failures": {"type": "integer", "minimum": 0},
+        "updated_at": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

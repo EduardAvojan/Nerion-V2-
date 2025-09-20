@@ -1,0 +1,58 @@
+# /Users/ed/Nerion/selfcoder/app/nerion_autocoder.py
+"""Nerion Autocoder CLI."""
+
+from pathlib import Path
+import sys
+
+from selfcoder.actions.crossfile import RenameSpec, apply_crossfile_rename
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Nerion Autocoder CLI")
+    subparsers = parser.add_subparsers(dest="command")
+
+    rename_parser = subparsers.add_parser("rename", help="Apply cross-file renames")
+    rename_parser.add_argument("--old-module", required=True)
+    rename_parser.add_argument("--old-attr")
+    rename_parser.add_argument("--new-module", required=True)
+    rename_parser.add_argument("--new-attr")
+    rename_parser.add_argument("--dry-run", action="store_true")
+
+    subparsers.add_parser("selfcheck", help="Run self-checks")
+
+    args = parser.parse_args()
+
+    if args.command == "rename":
+        if args.dry_run:
+            print("dry-run OK")
+            return 0
+
+        specs = [
+            RenameSpec(
+                old_module=args.old_module,
+                old_attr=args.old_attr,
+                new_module=args.new_module,
+                new_attr=args.new_attr,
+            )
+        ]
+
+        edited, files = apply_crossfile_rename(specs, project_root=Path.cwd())
+        print(f"Edited {edited} occurrences in {len(files)} files.")
+        return 0
+
+    if args.command == "selfcheck":
+        try:
+            # Call with an empty spec list to validate signature without changing files
+            apply_crossfile_rename([], project_root=Path.cwd())
+            print("Crossfile rename selfcheck OK")
+        except Exception as e:
+            print(f"Crossfile rename selfcheck failed: {e}")
+        return 0
+
+    parser.print_help()
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,104 @@
+# Node.js dependencies
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Backup and archive folders
+backups/
+_archive/
+
+# Logs
+*.log
+logs/
+
+# Pytest / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# IDE / Editor configs
+.vscode/
+*.code-workspace
+.idea/
+
+# Data files
+*.sqlite3
+*.bin
+*.db
+*.tar.gz
+*.zip
+
+# Nerion memory files
+memory_db.json
+memory_journal.json
+jarvis_memory/
+
+# Electron/Frontend cache
+**/out/
+**/build/
+
+# Project-specific
+app/ui/holo-app/node_modules/
+
+# Holo app deps
+app/ui/holo-app/node_modules/
+
+# Ignore holo-app deps
+app/ui/holo-app/node_modules/
+.venv/
+.DS_Store
+.venv/
+.DS_Store
+.venv/
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+node_modules/
+.nerion/snapshots/
+.nerion/artifacts/
+nerion_tree.txt
+*.log
+*.env
+.env.*
+*.key
+*.pem
+nerion_tree.txt
+
+# Env files
+.env
+.env.*
+
+# Temp files created by tests or local runs
+tmp/
+tmp_*.py
+tmp/*.json
+ 
+# Internal review temp files
+.nerion/review_tmp/

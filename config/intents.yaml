@@ -1,0 +1,158 @@
+# This file is the single source of truth for all of Nerion's capabilities.
+# It is used to build both the fast "Triage Rulebook" and the "Tool Manifest" for the Parent LLM.
+
+intents:
+  # ---------------- System Control (Highest Priority) ----------------
+  - name: local.exit_agent
+    priority: 100
+    is_triage_rule: true
+    description: "Shuts down the agent completely. Use for commands like 'exit' or 'shutdown'."
+    patterns:
+      - "^(exit|quit|shutdown|goodbye|terminate)$"
+    handler: app.chat.offline_tools:exit_agent
+
+  - name: local.toggle_speech
+    priority: 100
+    is_triage_rule: true
+    description: "Toggles the agent's speech (voice and mic) on or off."
+    patterns:
+      - "\\b(speech off|speech on|toggle speech)\\b"
+    handler: app.chat.offline_tools:toggle_speech
+
+  - name: local.set_mute_state
+    priority: 100
+    is_triage_rule: true
+    description: "Mutes or unmutes the agent's voice output. Use for commands like 'be quiet' or 'sound on'."
+    patterns:
+      - "\\b(mute|be quiet|silence|unmute|sound on)\\b"
+    handler: app.chat.offline_tools:set_mute_state
+
+  - name: local.enter_sleep_mode
+    priority: 100
+    description: "Puts the agent into a listening-only 'sleep' mode."
+    patterns:
+      - "\\b(stop listening|go to sleep|talk to you later)\\b"
+    handler: app.chat.offline_tools:enter_sleep_mode
+
+  # ---------------- Time & Date (High Priority, Offline) ----------------
+  - name: local.get_current_time
+    priority: 90
+    is_triage_rule: true
+    description: "Gets the current local system time. Use only for direct questions about the current time."
+    patterns:
+      - "\\b(what time is it|the current time|time please)\\b"
+    handler: app.chat.offline_tools:get_current_time
+
+  - name: local.get_current_date
+    priority: 90
+    is_triage_rule: true
+    description: "Gets the current local system date. Use for questions like 'what is today's date'."
+    patterns:
+      - "\\b(what(?:'s| is) today's date)\\b"
+      - "\\b(what(?:'s| is) the date(?: today)?)\\b"
+      - "\\b(what date is it(?: today)?)\\b"
+      - "\\b(today(?:'s)? date)\\b"
+      - "\\b(what day is it(?: today)?)\\b"
+      - "\\b(date please)\\b"
+    handler: app.chat.offline_tools:get_current_date
+
+  - name: local.set_timer
+    priority: 80
+    description: "Sets a timer for a specified duration, like '5 minutes' or 'an hour'."
+    patterns:
+      - "\\b(set a timer for|start a timer for|timer for)\\b"
+    handler: app.chat.offline_tools:set_timer
+
+  - name: local.stop_timer
+    priority: 80
+    description: "Stops or cancels the currently active timer."
+    patterns:
+      - "\\b(stop the timer|cancel the timer|clear timer)\\b"
+    handler: app.chat.offline_tools:stop_timer
+
+  # ---------------- Memory Management ----------------
+  - name: local.recall_memory
+    priority: 70
+    description: "Searches the agent's long-term, internal memory for facts the user has explicitly asked it to remember."
+    patterns:
+      - "\\b(what do you remember about|recall your memory on|summarize your memory of)\\b"
+    handler: app.chat.offline_tools:recall_memory
+
+  - name: local.forget_memory
+    priority: 70
+    description: "Removes a specific fact from the agent's long-term memory."
+    patterns:
+      - "\\b(forget that|forget about|delete that memory)\\b"
+    handler: app.chat.offline_tools:forget_memory
+
+  - name: local.pin_memory
+    priority: 70
+    description: "Takes the last piece of information discussed and saves it to the agent's permanent, long-term memory."
+    patterns:
+      - "\\b(pin that|pin this|remember this forever)\\b"
+    handler: app.chat.offline_tools:pin_memory
+
+  # ---------------- System Status & Diagnostics ----------------
+  - name: local.run_healthcheck
+    priority: 60
+    description: "Runs a set of internal health checks to verify the agent's systems are operational."
+    patterns:
+      - "\\b(run healthcheck|health check)\\b"
+    handler: app.chat.offline_tools:run_healthcheck
+
+  - name: local.check_cpu_usage
+    priority: 60
+    description: "Checks the current CPU load of the host machine."
+    patterns:
+      - "\\b(cpu usage|cpu load|processor usage)\\b"
+    handler: app.chat.offline_tools:check_cpu_usage
+
+  - name: local.check_memory_usage
+    priority: 60
+    description: "Checks the current RAM usage of the host machine."
+    patterns:
+      - "\\b(memory usage|ram usage)\\b"
+    handler: app.chat.offline_tools:check_memory_usage
+
+  - name: local.get_agent_status
+    priority: 50
+    description: "Provides a high-level status report of the agent itself."
+    patterns:
+      - "\\b(what's your status|are you okay|report status)\\b"
+    handler: app.chat.offline_tools:get_agent_status
+
+  # ---------------- Self-Coding & Engineering ----------------
+  - name: local.self_code
+    priority: 40
+    description: "Initiates the self-coding process. Use for commands that explicitly ask the agent to modify its own code."
+    patterns:
+      - "\\b(upgrade yourself|edit yourself|modify your code|self code)\\b"
+    handler: "app.chat.self_coder:handle_self_code_request"
+
+  - name: local.apply_plan
+    priority: 40
+    description: "Applies a previously generated self-coding plan. Use for commands like 'apply the plan' or 'proceed with the update'."
+    patterns:
+      - "\\b(apply the plan|proceed with the update|go ahead with the update)\\b"
+    handler: "app.chat.self_coder:handle_apply_request"
+
+  # ---------------- Web & Knowledge (Lowest Priority) ----------------
+  - name: web.site_query
+    priority: 20
+    description: "Performs a deep read and analysis of a single, specific website URL provided by the user in their prompt."
+    patterns:
+      - "(https?://[\\S]+)" # A simple regex to find any URL
+    handler: app.chat.research:run_site_query
+
+  - name: web.search
+    priority: 10
+    description: "Performs a web search to answer questions about real-time events, news, weather, or general knowledge that is not in memory."
+    patterns: [] # This intent has no hardcoded patterns; it's the fallback for the LLM
+    handler: app.chat.research:run_web_search
+
+  # ---------------- Final Fallback ----------------
+  - name: general.casual_chat
+    priority: 1
+    description: "A general-purpose conversational response for when no other specific tool is appropriate, like for greetings, opinions, or brainstorming."
+    patterns: []
+    handler: app.chat.llm:run_chat_response
