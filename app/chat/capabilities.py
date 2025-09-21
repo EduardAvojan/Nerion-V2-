@@ -262,54 +262,23 @@ def summarize_capability_detail(topic: str) -> str:
 
 
 def summarize_capabilities(style: str = "brief") -> str:
-    """Return a concise, auto‑updating summary of Nerion's capabilities.
-
-    - Reads `config/tools.yaml` if present to infer tool counts and network usage.
-    - Detects presence of self‑coding stack, memory, and voice IO.
-    - Mentions plugin count when available.
-    """
-    # Cache keyed by config signature to avoid recomputation and LLM latency
+    """Return a concise, auto-updating summary of Nerion's capabilities."""
     sig = _signature()
-    if _CACHE["sig"] == sig and _CACHE.get(style):
-        return _CACHE[style]  # type: ignore
+    cached = _CACHE.get(style)
+    if _CACHE['sig'] == sig and cached:
+        return cached  # type: ignore
 
     facts = _build_facts()
+    if style == 'detailed':
+        body = '\n'.join(f"- {fact}" for fact in facts)
+        out_text = "I’m Nerion. Here’s a quick overview of my major capabilities:\n" + body
+    else:
+        lead = "I’m Nerion, your privacy-first assistant orchestrating the hosted models you configure."
+        headline = ', '.join(facts[:6]).rstrip('.') if facts else 'help with local development tasks'
+        out_text = lead + ' I can ' + headline + '.'
 
-    # Try to summarize via local LLM for a more natural, context‑aware blurb
-    out_text = None
-    if style == "brief":
-        try:
-            from langchain_ollama import ChatOllama  # type: ignore
-            try:
-                # Use existing scrubber to drop any think/role echoes
-                from app.chat.llm import _strip_think_blocks as _scrub  # type: ignore
-            except Exception:
-                def _scrub(s: str) -> str:  # type: ignore
-                    return s
-            llm = ChatOllama(model=os.getenv('NERION_LLM_MODEL', 'deepseek-r1:14b'), temperature=0.2)
-            system = (
-                "You are Nerion. Identify in first person (I/I've). Identify only as 'Nerion' (local, privacy‑first assistant). "
-                "Do not name model providers. Summarize the capability bullet points into one concise paragraph (1–2 sentences). "
-                "Mention self‑coding with rollback, self‑improvement, memory, permissioned web, voice/text, tools/plugins, and safety if present."
-            )
-            user = "\n".join(["CAPABILITIES:"] + [f"- {f}" for f in facts])
-            resp = llm.invoke([{"role": "system", "content": system}, {"role": "user", "content": user}])
-            if hasattr(resp, 'content'):
-                out_text = _scrub(str(resp.content).strip())
-        except Exception:
-            out_text = None
-    if style == "detailed" or not out_text:
-        # Fallback or explicit detailed list
-        if style == "detailed":
-            out_text = "I’m Nerion. Here’s a quick overview of my major capabilities:\n" + "\n".join(
-                f"- {f}" for f in facts
-            )
-        else:
-            # Compose a compact sentence from facts
-            lead = "I’m Nerion, your local, privacy‑first assistant running on this device."
-            out_text = lead + " I can " + ", ".join(facts[:6]).rstrip(".") + "."
-
-    _CACHE["sig"] = sig
+    _CACHE['sig'] = sig
     _CACHE[style] = out_text
-    _CACHE["ts"] = time.time()
+    _CACHE['ts'] = time.time()
     return out_text
+

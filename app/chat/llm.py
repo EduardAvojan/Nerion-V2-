@@ -12,8 +12,6 @@ from __future__ import annotations
 from typing import List, Optional, Any
 import os
 import re
-import socket
-from urllib.parse import urlparse
 
 __all__ = [
     # prompt helpers
@@ -29,17 +27,18 @@ __all__ = [
 # --------------------------- Prompt helpers ---------------------------------
 
 def _build_followup_prompt(history: List[dict], user_text: str, artifact_text: Optional[str]) -> str:
-    """Construct a compact follow‑up prompt from recent history and optional artifact."""
+    """Construct a compact follow-up prompt from recent history and optional artifact."""
     turns = (history or [])[-8:]
     lines: List[str] = []
     lines.append("You are Nerion. Continue the SAME conversation.")
     # Persona + disclosure guardrails
-    lines.append("Identify only as 'Nerion' (a local, privacy‑first assistant running on the user's device).")
-    lines.append("Never claim to be ChatGPT, GPT‑3.5/4, DeepSeek, LLaMA, or any company‑branded model.")
-    lines.append("If asked what model you use, reply: 'I run locally as Nerion on your device.' Do not name a provider or model ID.")
-    lines.append("Keep replies concise by default (1–2 sentences) unless the user asks for detail.")
+    lines.append("Identify only as 'Nerion', the user's private developer assistant orchestrating hosted models on their behalf.")
+    lines.append("Never claim to be ChatGPT, GPT-3.5/4, DeepSeek, LLaMA, or any company-branded model.")
+    lines.append("If asked about the model, explain that Nerion routes to the user's configured providers (e.g., OpenAI, Anthropic) and summarize which one is active if known.")
+    lines.append("Keep replies conversational by default (2–3 sentences) unless the user explicitly asks for something shorter or longer.")
     lines.append("Answer about the previously recommended product/page, not about yourself.")
     lines.append("If asked for a 'model number' or similar identifier, extract it from the artifact/context if present; if missing, say so and ask one precise clarifying question.")
+    lines.append("If the user is making small talk, respond naturally without deflecting unless a tool run is required.")
     lines.append("Do NOT explain your chain-of-thought. Output the final answer only.")
     lines.append("\nConversation so far:")
     for t in turns:
@@ -59,7 +58,7 @@ def _answer_style_hint(user_q: str) -> str:
     return (
         "Prefer concrete facts (numbers, dates, names). Quote values exactly as found. "
         "If sources disagree, prefer the most recent or majority view. "
-        "Answer directly in 1–2 sentences."
+        "Answer directly in a conversational tone, usually 2–3 sentences unless the user requests otherwise."
     )
 
 
@@ -108,78 +107,93 @@ def _strip_think_blocks(resp: str) -> str:
         return resp.strip()
 
 
-# --------------------------- Chain builders ---------------------------------
+# --------------------------- Provider-backed chain --------------------------
 
-def _ollama_endpoint() -> tuple[str, int]:
-    """Return host/port tuple for the configured Ollama endpoint."""
-    host = os.getenv('OLLAMA_HOST') or os.getenv('OLLAMA_BASE_URL') or 'http://127.0.0.1:11434'
-    if '://' not in host:
-        host = f'http://{host}'
-    parsed = urlparse(host)
-    hostname = parsed.hostname or '127.0.0.1'
-    port = parsed.port
-    if port is None:
-        port = 443 if parsed.scheme == 'https' else 80
-    return hostname, port
+from app.chat.providers import (  # imported late to avoid circular import in legacy tests
+    ProviderError,
+    ProviderNotConfigured,
+    get_registry,
+)
 
 
-def _ollama_available(timeout: float = 0.35) -> bool:
-    host, port = _ollama_endpoint()
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
+class _ProviderBackedChain:
+    """Simple adapter exposing LangChain-like interface backed by ProviderRegistry."""
+
+    IS_STUB = False
+
+    def __init__(self, *, role: str, temperature: float):
+        self._role = role
+        self._temperature = float(temperature)
+        self._registry = get_registry()
+        self._nerion_model_name = self._describe_model()
+        self.last_response = None
+
+    def _describe_model(self) -> str:
+        try:
+            adapter, model_name, _spec = self._registry.resolve(self._role)
+            return f"{adapter.name}:{model_name}"
+        except ProviderNotConfigured:
+            return "unconfigured"
+
+    def predict(self, prompt: str | None = None, **kwargs: Any) -> str:  # pragma: no cover - wrapper
+        if prompt is None:
+            if 'input' in kwargs:
+                prompt = kwargs.pop('input')
+            elif 'prompt' in kwargs:
+                prompt = kwargs.pop('prompt')
+            else:
+                prompt = ''
+        if not isinstance(prompt, str):
+            prompt = str(prompt or '')
+        messages = kwargs.pop('messages', None)
+        response_format = kwargs.pop('response_format', None)
+        max_tokens = kwargs.pop('max_tokens', None)
+        if max_tokens is not None:
+            try:
+                max_tokens = int(max_tokens)
+            except Exception:
+                max_tokens = None
+        try:
+            result = self._registry.generate(
+                role=self._role,
+                prompt=prompt,
+                temperature=self._temperature,
+                messages=messages,
+                response_format=response_format,
+                max_tokens=max_tokens,
+            )
+        except ProviderNotConfigured as exc:
+            self.IS_STUB = True
+            self._nerion_model_name = "unconfigured"
+            return (
+                "I need API credentials before I can answer. "
+                "Set the required keys from app/settings.yaml (e.g., NERION_V2_OPENAI_KEY) and try again."
+            )
+        except ProviderError as exc:
+            self.IS_STUB = True
+            self._nerion_model_name = self._describe_model()
+            return f"Sorry, I hit a provider error: {exc}"
+        self.IS_STUB = False
+        self.last_response = result
+        self._nerion_model_name = f"{result.provider}:{result.model}"
+        return result.text or ""
+
+    def stop(self) -> None:
+        """Maintain API parity with legacy LangChain objects."""
+        return None
+
+
+_CHAIN_CACHE: dict[str, _ProviderBackedChain] = {}
 
 
 def build_chain() -> Any:
-    """Construct a conversational chain.
+    return build_chain_with_temp(0.7)
 
-    Tries to build a LangChain + ChatOllama pipeline. If LangChain or the
-    provider isn't available, fall back to a tiny local stub that echoes
-    with light formatting. This keeps CLI/tests resilient on minimal envs.
-    """
-    try:
-        from langchain_ollama import ChatOllama  # type: ignore
-        from langchain.chains import ConversationChain  # type: ignore
-        from langchain.memory import ConversationBufferMemory  # type: ignore
-        if not _ollama_available():
-            raise RuntimeError('Ollama endpoint unavailable')
-        model = os.getenv('NERION_LLM_MODEL', 'deepseek-r1:14b')
-        llm = ChatOllama(model=model)
-        memory = ConversationBufferMemory()
-        chain = ConversationChain(llm=llm, memory=memory, verbose=False)
-        setattr(chain, '_nerion_model_name', model)
-        setattr(chain, 'IS_STUB', False)
-        return chain
-    except Exception:
-        class _StubChain:
-            IS_STUB = True
-            _nerion_model_name = 'stub'
-            def predict(self, input: str) -> str:  # pragma: no cover - simple fallback
-                txt = (input or '').strip()
-                if '\nUser said:' in txt:
-                    txt = txt.split('\nUser said:', 1)[1].strip()
-                return f"(fallback) You said: {txt}"
-        return _StubChain()
-
-
-_CHAIN_CACHE: dict[str, Any] = {}
 
 def build_chain_with_temp(temp: float) -> Any:
     key = f"{float(temp):.2f}"
-    if key in _CHAIN_CACHE:
-        return _CHAIN_CACHE[key]
-    try:
-        from langchain_ollama import ChatOllama  # type: ignore
-        from langchain.chains import ConversationChain  # type: ignore
-        from langchain.memory import ConversationBufferMemory  # type: ignore
-        model = os.getenv('NERION_LLM_MODEL', 'deepseek-r1:14b')
-        llm = ChatOllama(model=model, temperature=float(temp))
-        chain = ConversationChain(llm=llm, memory=ConversationBufferMemory(), verbose=False)
+    chain = _CHAIN_CACHE.get(key)
+    if chain is None:
+        chain = _ProviderBackedChain(role="chat", temperature=temp)
         _CHAIN_CACHE[key] = chain
-        setattr(chain, '_nerion_model_name', model)
-        setattr(chain, 'IS_STUB', False)
-        return chain
-    except Exception:
-        return build_chain()
+    return chain

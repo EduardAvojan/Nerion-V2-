@@ -1,29 +1,35 @@
-catalog:
-  ollama:
-    deepseek-coder-v2:
-      pull: deepseek-coder-v2
-    qwen2.5-coder:
-      pull: qwen2.5-coder
-    starcoder2:
-      pull: starcoder2
-    codellama:
-      pull: codellama
-  llama_cpp:
-    codellama-7b-instruct:
-      url: https://huggingface.co/TheBloke/CodeLlama-7B-Instruct-GGUF/resolve/main/codellama-7b-instruct.Q4_0.gguf
-      filename: codellama-7b-instruct.Q4_0.gguf
-    deepseek-coder-6.7b-instruct:
-      url: https://huggingface.co/bartowski/DeepSeek-Coder-6.7B-instruct-GGUF/resolve/main/DeepSeek-Coder-6.7B-instruct-Q4_K_M.gguf
-      filename: DeepSeek-Coder-6.7B-instruct-Q4_K_M.gguf
-  vllm:
-    deepseek-coder-6.7b-instruct:
-      repo: deepseek-ai/deepseek-coder-6.7b-instruct
-    qwen2.5-coder-7b:
-      repo: Qwen/Qwen2.5-Coder-7B
-    starcoder2-7b:
-      repo: bigcode/starcoder2-7b
-  exllamav2:
-    codellama-7b-instruct-gptq:
-      repo: TheBloke/CodeLlama-7B-Instruct-GPTQ
-      note: exllamav2 expects GPTQ/AWQ formats; ensure compatibility.
-
+# Nerion V2 (API-first) provider catalog. Legacy offline sections lifted into Nerion Classic.
+api_providers:
+  defaults:
+    chat: openai:o4-mini
+    code: openai:o4-mini
+    planner: anthropic:claude-3-5-sonnet
+    embeddings: openai:text-embedding-3-large
+  providers:
+    openai:
+      endpoint: https://api.openai.com/v1
+      key_env: NERION_V2_OPENAI_KEY
+      models:
+        o4-mini:
+          roles: [chat, code]
+          max_output_tokens: 16000
+          supports_tools: true
+        text-embedding-3-large:
+          roles: [embeddings]
+          dimensionality: 3072
+    anthropic:
+      endpoint: https://api.anthropic.com/v1
+      key_env: NERION_V2_ANTHROPIC_KEY
+      models:
+        claude-3-5-sonnet:
+          roles: [planner, chat]
+          max_output_tokens: 8000
+          supports_structured_output: true
+    google:
+      endpoint: https://generativelanguage.googleapis.com/v1beta
+      key_env: NERION_V2_GEMINI_KEY
+      models:
+        gemini-2.5-pro:
+          roles: [chat, code, planner]
+          supports_structured_output: true
+          multimodal: true

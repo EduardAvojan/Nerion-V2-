@@ -71,22 +71,27 @@ def _to_env_from_profile(p: Dict[str, Any]) -> Dict[str, str]:
     # LLM model pinning (optional)
     llm = p.get("llm") or {}
     if isinstance(llm, dict):
-        chat = llm.get("chat") or {}
-        if isinstance(chat, dict):
-            m = str(chat.get("model") or "").strip()
-            if m:
-                env["NERION_LLM_MODEL"] = m
-        coder = llm.get("coder") or {}
-        if isinstance(coder, dict):
-            be = str(coder.get("backend") or "").strip()
-            if be:
-                env["NERION_CODER_BACKEND"] = be
-            m = str(coder.get("model") or "").strip()
-            if m:
-                env["NERION_CODER_MODEL"] = m
-            base = str(coder.get("base_url") or "").strip()
-            if base:
-                env["NERION_CODER_BASE_URL"] = base
+        default_provider = str(llm.get("default_provider") or "").strip()
+        if default_provider:
+            env["NERION_V2_DEFAULT_PROVIDER"] = default_provider
+        fallback_provider = str(llm.get("fallback_provider") or "").strip()
+        if fallback_provider:
+            env["NERION_V2_FALLBACK_PROVIDER"] = fallback_provider
+        roles = llm.get("roles") or {}
+        if isinstance(roles, dict):
+            for role, provider in roles.items():
+                provider_id = str(provider or "").strip()
+                if not provider_id:
+                    continue
+                role_key = role.lower()
+                if role_key == "chat":
+                    env["NERION_V2_CHAT_PROVIDER"] = provider_id
+                elif role_key == "code":
+                    env["NERION_V2_CODE_PROVIDER"] = provider_id
+                elif role_key == "planner":
+                    env["NERION_V2_PLANNER_PROVIDER"] = provider_id
+                elif role_key == "embeddings":
+                    env["NERION_V2_EMBEDDINGS_PROVIDER"] = provider_id
     # Network gate (optional): map net.allow -> NERION_ALLOW_NETWORK=1 when true
     net = p.get("net") or {}
     if isinstance(net, dict) and bool(net.get("allow", False)):

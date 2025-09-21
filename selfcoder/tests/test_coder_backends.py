@@ -1,35 +1,43 @@
 from __future__ import annotations
 
-import importlib
 from types import SimpleNamespace
-import os
+import pytest
+
+from app.chat.providers import LLMResponse, ProviderNotConfigured
+from app.parent.coder import Coder
 
 
-def test_ollama_backend_selected(monkeypatch):
-    class DummyChat:
-        def __init__(self, **k):
-            pass
-        def invoke(self, messages):
-            return SimpleNamespace(content="OK")
-    import sys
-    sys.modules["langchain_ollama"] = SimpleNamespace(ChatOllama=DummyChat)
-    os.environ["NERION_CODER_BACKEND"] = "ollama"
-    os.environ["NERION_CODER_MODEL"] = "deepseek-coder-v2"
-    from app.parent.coder import Coder
-    c = Coder()
-    out = c.complete("Reply with OK only.")
-    assert out and "OK" in out
-    os.environ.pop("NERION_CODER_BACKEND", None)
-    os.environ.pop("NERION_CODER_MODEL", None)
+class DummyRegistry:
+    def __init__(self, text: str):
+        self.text = text
+        self.calls = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return LLMResponse(
+            text=self.text,
+            provider="openai",
+            model="o4-mini",
+            latency_s=0.1,
+        )
 
 
-def test_llama_cpp_unavailable_returns_none(monkeypatch):
-    # Ensure import fails
-    import sys
-    sys.modules.pop("llama_cpp", None)
-    os.environ["NERION_CODER_BACKEND"] = "llama_cpp"
-    from app.parent.coder import Coder
-    c = Coder(model="codellama")
-    out = c.complete("hi")
-    assert out is None
-    os.environ.pop("NERION_CODER_BACKEND", None)
+def test_coder_uses_registry(monkeypatch):
+    registry = DummyRegistry("OK")
+    monkeypatch.setattr("app.parent.coder.get_registry", lambda: registry)
+    coder = Coder()
+    out = coder.complete("Return OK", system="sys")
+    assert out == "OK"
+    assert registry.calls
+    call = registry.calls[0]
+    assert call["role"] == "code"
+    assert call["messages"][0]["role"] == "system"
+
+
+def test_coder_handles_missing_provider(monkeypatch):
+    class FailingRegistry:
+        def generate(self, **kwargs):
+            raise ProviderNotConfigured("missing")
+    monkeypatch.setattr("app.parent.coder.get_registry", lambda: FailingRegistry())
+    coder = Coder()
+    assert coder.complete("hi") is None

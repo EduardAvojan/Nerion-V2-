@@ -56,9 +56,23 @@ if _ipc.enabled():
 # Load local environment variables from .env (if present)
 try:
     from dotenv import load_dotenv  # type: ignore
-    load_dotenv()
+
+    _DOTENV_OVERRIDE = os.getenv('NERION_DOTENV_PATH')
+    if _DOTENV_OVERRIDE:
+        candidates = [Path(_DOTENV_OVERRIDE)]
+    else:
+        base = Path(__file__).resolve().parents[1]
+        candidates = [base / '.env', Path.cwd() / '.env']
+    loaded = False
+    for candidate in candidates:
+        if candidate.exists():
+            load_dotenv(dotenv_path=candidate)
+            loaded = True
+            break
+    if not loaded:
+        load_dotenv()
 except Exception:
-    # If python-dotenv is not installed, continue silently
+    # If python-dotenv is not installed or load fails, continue silently
     pass
 
 # --- Search environment normalization helper ---
@@ -157,11 +171,6 @@ logger = logging.getLogger(__name__)
 try:
     from urllib3.exceptions import NotOpenSSLWarning
     warnings.filterwarnings('ignore', category=NotOpenSSLWarning)
-except ImportError:
-    pass
-try:
-    from langchain_core._api.deprecation import LangChainDeprecationWarning
-    warnings.filterwarnings('ignore', category=LangChainDeprecationWarning)
 except ImportError:
     pass
 os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')

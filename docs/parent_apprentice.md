@@ -3,8 +3,7 @@ Parent–Apprentice Architecture (DeepSeek ←→ Nerion)
 
 Overview
 --------
-Nerion (the Apprentice) delegates planning to a Parent LLM (DeepSeek local via Ollama),
-then safely executes the resulting plan using a typed, allow‑listed tool interface.
+Nerion (the Apprentice) delegates planning to a Parent LLM (in V2 this is typically a hosted provider such as Anthropic Claude via API), then safely executes the resulting plan using a typed, allow‑listed tool interface.
 
 Key Components
 --------------
@@ -16,7 +15,7 @@ Key Components
 
 Safety
 ------
-- Offline‑by‑default: Network is disabled unless a session is granted (with domain scope and idle revoke).
+- Network gate: outbound requests are limited to the LLM providers you configure and require explicit grants when other tools need additional domains.
 - Repo jail: All file I/O is guarded by `ops.security.fs_guard`.
 - Security gate: Self‑improve and orchestrated writes are preflight‑scanned.
 
@@ -36,4 +35,3 @@ Getting Started
 2. Runners: wire a callable per tool in `app/chat/parent_exec.py` (or inject your own into `ParentExecutor`).
 3. Network: ensure a single prompt for network when `requires_network=true` via `_ensure_network_for('parent.plan')`.
 4. Observe: Inspect metrics in the experience log; iterate tool prompts and descriptions for better planning.
-

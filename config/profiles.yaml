@@ -22,11 +22,13 @@ profiles:
       allow: true
       domains: []
     llm:
-      chat:
-        model: deepseek-r1:14b
-      coder:
-        backend: ollama
-        model: deepseek-coder-v2
+      default_provider: openai:o4-mini
+      fallback_provider: anthropic:claude-3-5-sonnet
+      roles:
+        chat: openai:o4-mini
+        code: openai:o4-mini
+        planner: anthropic:claude-3-5-sonnet
+        embeddings: openai:text-embedding-3-large
 
   balanced:
     policy: balanced
@@ -51,12 +53,13 @@ profiles:
       allow: true
       domains: []
     llm:
-      chat:
-        model: deepseek-r1:14b
-      coder:
-        backend: ollama
-        model: deepseek-coder-v2
-        base_url: http://localhost:11434
+      default_provider: openai:o4-mini
+      fallback_provider: anthropic:claude-3-5-sonnet
+      roles:
+        chat: openai:o4-mini
+        code: openai:o4-mini
+        planner: anthropic:claude-3-5-sonnet
+        embeddings: openai:text-embedding-3-large
 
   safe:
     policy: safe
@@ -81,12 +84,13 @@ profiles:
       allow: true
       domains: []
     llm:
-      chat:
-        model: deepseek-r1:14b
-      coder:
-        backend: ollama
-        model: deepseek-coder-v2
-        base_url: http://localhost:11434
+      default_provider: anthropic:claude-3-5-sonnet
+      fallback_provider: openai:o4-mini
+      roles:
+        chat: anthropic:claude-3-5-sonnet
+        code: openai:o4-mini
+        planner: anthropic:claude-3-5-sonnet
+        embeddings: openai:text-embedding-3-large
 
   bench-recommended:
     policy: fast
@@ -111,9 +115,10 @@ profiles:
       allow: true
       domains: []
     llm:
-      chat:
-        model: deepseek-r1:14b
-      coder:
-        backend: ollama
-        model: deepseek-coder-v2
-        base_url: http://localhost:11434
+      default_provider: openai:o4-mini
+      fallback_provider: anthropic:claude-3-5-sonnet
+      roles:
+        chat: openai:o4-mini
+        code: openai:o4-mini
+        planner: anthropic:claude-3-5-sonnet
+        embeddings: openai:text-embedding-3-large

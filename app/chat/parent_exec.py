@@ -110,41 +110,17 @@ def build_executor(*, ensure_network_for: EnsureNetCB, get_heard: GetHeardCB, pa
             snippet = text[:8000]
             # Try local LLM summary; fall back to a heuristic
             try:
-                # Allow disabling the LLM path explicitly (e.g., CI/tests)
                 if str(os.getenv('NERION_SUMMARY_LLM', '')).strip().lower() in {'0','false','no'}:
                     raise RuntimeError('summary LLM disabled by env')
-
-                # Fast reachability probe for local Ollama; skip if unreachable
-                def _ollama_reachable(host: str) -> bool:
-                    try:
-                        from urllib.parse import urlparse as _up
-                        import socket
-                        u = _up(host or 'http://127.0.0.1:11434')
-                        h = u.hostname or '127.0.0.1'
-                        p = u.port or (443 if (u.scheme or 'http') == 'https' else 80)
-                        with socket.create_connection((h, p), timeout=0.3):
-                            return True
-                    except Exception:
-                        return False
-
-                base = os.getenv('OLLAMA_HOST', 'http://127.0.0.1:11434')
-                if not _ollama_reachable(base):
-                    raise RuntimeError('ollama not reachable')
-
-                from langchain_ollama import ChatOllama
-                # Provide base_url so we respect custom OLLAMA_HOST if set
-                try:
-                    llm = ChatOllama(model=os.getenv('NERION_LLM_MODEL', 'deepseek-r1:14b'), temperature=0.2, base_url=base)
-                except TypeError:
-                    # Older versions may not support base_url; fall back silently
-                    llm = ChatOllama(model=os.getenv('NERION_LLM_MODEL', 'deepseek-r1:14b'), temperature=0.2)
-                prompt = (
-                    "Summarize the following file in 5 bullets with concrete facts.\n\n" + snippet
-                )
-                resp = llm.invoke(prompt)
-                out = getattr(resp, 'content', str(resp))
-            except Exception:
-                # Heuristic: first 5 non-empty lines
+                registry = get_registry()
+                prompt = "Summarize the following file in 5 bullets with concrete facts."
+                messages = [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": snippet},
+                ]
+                resp = registry.generate(role='chat', messages=messages, temperature=0.2)
+                out = resp.text or ''
+            except (ProviderNotConfigured, ProviderError, RuntimeError):
                 lines = [ln.strip() for ln in snippet.splitlines() if ln.strip()]
                 out = "\n".join(["- " + ln for ln in lines[:5]])
             return {"path": safe_p.as_posix(), "summary": out}

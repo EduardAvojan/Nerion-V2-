@@ -565,7 +565,7 @@ def run_main_loop(STATE, voice_cfg) -> None:
     _bootstrap_memory_state()
     mem = _MEMORY_STORE or LongTermMemory('memory_db.json')
     try:
-        llm_timeout = float(os.getenv('NERION_LLM_TIMEOUT_S', '12'))
+        llm_timeout = float(os.getenv('NERION_LLM_TIMEOUT_S', '25'))
         if llm_timeout <= 0:
             llm_timeout = 0.0
     except Exception:
@@ -589,6 +589,7 @@ def run_main_loop(STATE, voice_cfg) -> None:
         _ipc.register_handler('memory', router.handle_memory)
         _ipc.register_handler('health', router.handle_health)
         _ipc.register_handler('settings', router.handle_settings)
+        _ipc.register_handler('llm', router.handle_llm)
         _ipc.register_handler('learning', router.handle_learning)
         _ipc.register_handler('upgrade', router.handle_upgrade)
         _ipc.register_handler('artifact', router.handle_artifact)
@@ -607,6 +608,7 @@ def run_main_loop(STATE, voice_cfg) -> None:
                 'speech_enabled': bool(getattr(STATE.voice, 'enabled', True)),
                 'muted': bool(getattr(STATE, 'muted', False)),
             })
+            router.emit_llm_options()
             router.emit_metrics()
 
     # Load data-driven intent rules (from config/intents.yaml) once per session
@@ -1003,7 +1005,8 @@ def run_main_loop(STATE, voice_cfg) -> None:
                     continue
                 # Model identity queries → standard answer (avoid provider leakage)
                 if re.search(r"\b(what|which)\s+(language\s+)?model\s+do\s+you\s+use\b|\bwhich\s+model\b|\bwhat\s+model\b", heard, flags=re.I):
-                    out = "I run locally as Nerion on your device."
+                    out = ("I'm Nerion. I orchestrate the hosted models you've configured—like OpenAI or Anthropic—"
+                           "to answer your requests while keeping control on your device.")
                     print('Nerion:', out)
                     safe_speak(out, watcher)
                     try:
@@ -1109,7 +1112,7 @@ def run_main_loop(STATE, voice_cfg) -> None:
                         with _Busy("Thinking…", start_delay_s=2.0):
                             out = _cap_sum("brief")
                     except Exception:
-                        out = ("I’m Nerion, running locally. I can plan tasks, safely self‑code this repo, "
+                        out = ("I’m Nerion. I coordinate the hosted models you configure to plan tasks, safely self‑code this repo, "
                                "remember preferences, and research the web with your permission.")
                     # Offer dev mode for more specifics
                     if not bool(getattr(STATE, '_dev_mode', False)):
@@ -1665,10 +1668,6 @@ def run_main_loop(STATE, voice_cfg) -> None:
 
             # Small talk and diagnostics shortcuts (avoid LLM)
             try:
-                if re.search(r"\b(how are you( doing)?|how's it going)\b", heard, flags=re.I):
-                    out = "I'm here and ready. How can I help?"
-                    _deliver_offline_response(out, 'Handled small talk', log_rule='local.smalltalk_ack', drivers=['Offline rule: small talk'], confidence=0.88)
-                    continue
                 # Upgrade details/status queries (offline answer)
                 if re.search(r"\b(what|which|did you|you)\s+(?:upgrade|update|change)\b", heard, flags=re.I):
                     note = "I completed a code upgrade recently."
@@ -1726,29 +1725,29 @@ def run_main_loop(STATE, voice_cfg) -> None:
             except Exception:
                 pass
 
-            # Run local chat model to produce a response
+            # Run provider-backed chat model to produce a response
             is_stub_model = False
-            model_label = os.getenv('NERION_LLM_MODEL', 'deepseek-r1:14b')
+            model_label = 'unconfigured'
             response_failed = False
             try:
                 temp = STATE.voice.current_temperature(0.7)
                 chat_chain = build_chain_with_temp(temp)
                 is_stub_model = bool(getattr(chat_chain, 'IS_STUB', False))
-                model_label = getattr(chat_chain, '_nerion_model_name', os.getenv('NERION_LLM_MODEL', 'deepseek-r1:14b'))
+                model_label = getattr(chat_chain, '_nerion_model_name', 'unconfigured')
                 art_txt = _load_last_artifact_from_state(STATE)
                 if relation == 'on' and getattr(STATE, 'active', None):
                     hist = list(getattr(STATE.active, 'chat_history', []) or [])
                     prompt = _build_followup_prompt(hist, heard, art_txt)
                 else:
                     artifact_block = ('Relevant artifact (truncated):\n' + art_txt + '\n') if art_txt else ''
-                    style = "Prefer concrete facts. Answer directly in one sentence."
+                    style = "Be clear and conversational. Offer 2–3 sentences by default and add detail when it genuinely helps."
                     concise_hint = "\nPlease answer in one sentence." if bool(getattr(STATE, '_concise_mode', False)) else ""
                     system = (
-                        "You are Nerion, a local privacy-first assistant. "
-                        "Be concise and non-intrusive. Do not invent user preferences. "
-                        "Do NOT include disclaimers like 'as an AI' or training cutoffs; just answer. "
+                        "You are Nerion, a privacy-first assistant coordinating hosted LLM APIs using the user's credentials. "
+                        "Deliver helpful, natural answers while respecting privacy and never inventing user preferences. "
+                        "Do NOT include disclaimers like 'as an AI' or training cutoffs; answer directly. "
                         "Never output <think> tags or chain-of-thought; provide only the final answer. "
-                        "If the question is vague, ask one crisp clarifying question."
+                        "If essential details are missing and you cannot proceed safely, ask one concise clarifying question; otherwise give your best helpful answer."
                     )
                     prompt = f"{system}\n{mem_block}\n{artifact_block}User said: {heard}\n{style}{concise_hint}"
                 detail_label = f'Composing response via {model_label}'
@@ -1773,15 +1772,28 @@ def run_main_loop(STATE, voice_cfg) -> None:
                 _finish_response('Response generation failed', status='failed')
             else:
                 _finish_response('Response delivered', status='complete')
+            llm_meta = getattr(chat_chain, 'last_response', None)
             if confidence_score is None:
                 if is_stub_model:
                     confidence_score = 0.45
                     confidence_drivers = ['Fallback response (stub model)']
                 else:
-                    confidence_score = 0.75
-                    confidence_drivers = [f'LLM: {model_label}']
+                    confidence_score = 0.78
+                    if llm_meta is not None:
+                        latency_ms = int(llm_meta.latency_s * 1000)
+                        confidence_drivers = [
+                            f"LLM: {llm_meta.provider}:{llm_meta.model}",
+                            f"Latency: {latency_ms} ms",
+                        ]
+                    else:
+                        confidence_drivers = [f'LLM: {model_label}']
             _emit_conf(confidence_score, confidence_drivers)
             if router:
+                setattr(router.state, 'last_llm_details', {
+                    'provider': getattr(llm_meta, 'provider', model_label.split(':')[0] if ':' in model_label else model_label),
+                    'model': getattr(llm_meta, 'model', model_label.split(':')[-1]),
+                    'latency_ms': int(llm_meta.latency_s * 1000) if llm_meta else None,
+                })
                 router.emit_metrics()
             _session_record_assistant(response)
             if router:

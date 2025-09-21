@@ -26,6 +26,7 @@
   const conversationEmpty = qs('#conversationEmpty');
   const modeToggle = qs('#modeToggle');
   const modeButtons = modeToggle ? Array.from(modeToggle.querySelectorAll('.mode-toggle__button')) : [];
+  const llmSelector = qs('#llmSelector');
   const artifactsPanel = qs('#artifactsPanel');
   const artifactGrid = qs('#artifactGrid');
   const artifactCount = qs('#artifactCount');
@@ -147,6 +148,9 @@
       autospeak: false,
     },
     pendingUserEcho: null,
+    llm: {
+      roles: [],
+    },
   };
   let standbyTimer = null;
 
@@ -432,6 +436,79 @@
       const dd = document.createElement('dd');
       dd.textContent = metric.value || '';
       metricList.append(dt, dd);
+    });
+  }
+
+  function renderLlmSelector() {
+    if (!llmSelector) {
+      return;
+    }
+    const roles = state.llm && Array.isArray(state.llm.roles) ? state.llm.roles : [];
+    if (!roles.length) {
+      llmSelector.innerHTML = '';
+      llmSelector.setAttribute('hidden', '');
+      return;
+    }
+    llmSelector.removeAttribute('hidden');
+    llmSelector.innerHTML = '';
+    roles.forEach((role) => {
+      const roleId = role.role || 'chat';
+      const container = document.createElement('div');
+      container.className = 'llm-selector__role';
+      container.dataset.role = roleId;
+      if (role.overridden) {
+        container.classList.add('llm-selector__role--overridden');
+      }
+
+      const labelEl = document.createElement('label');
+      const selectId = `llmSelect-${roleId}`;
+      labelEl.className = 'llm-selector__label';
+      labelEl.htmlFor = selectId;
+      labelEl.textContent = role.label || roleId;
+      container.appendChild(labelEl);
+
+      const select = document.createElement('select');
+      select.className = 'llm-selector__select';
+      select.id = selectId;
+      select.dataset.role = roleId;
+
+      const autoOption = document.createElement('option');
+      autoOption.value = '';
+      const autoLabel = role.default_label || role.default || 'default';
+      autoOption.textContent = autoLabel && autoLabel !== 'Auto' ? `Auto — ${autoLabel}` : 'Auto';
+      select.appendChild(autoOption);
+
+      (role.options || []).forEach((opt) => {
+        if (!opt || !opt.id) {
+          return;
+        }
+        const optionEl = document.createElement('option');
+        optionEl.value = opt.id;
+        optionEl.textContent = opt.label || opt.id;
+        if (opt.note) {
+          optionEl.title = opt.note;
+        }
+        select.appendChild(optionEl);
+      });
+
+      if (role.overridden && role.active) {
+        select.value = role.active;
+      } else {
+        select.value = '';
+      }
+
+      container.appendChild(select);
+
+      const status = document.createElement('p');
+      status.className = 'llm-selector__status';
+      if (role.overridden && role.active_label) {
+        status.textContent = `Using ${role.active_label}`;
+      } else {
+        status.textContent = `Using default (${role.default_label || role.default || '—'})`;
+      }
+      container.appendChild(status);
+
+      llmSelector.appendChild(container);
     });
   }
 
@@ -1307,6 +1384,13 @@
         }
         break;
       }
+      case 'llm_options': {
+        state.llm = {
+          roles: Array.isArray(payload.roles) ? payload.roles : [],
+        };
+        renderLlmSelector();
+        break;
+      }
       case 'memory_session': {
         state.memorySession = Array.isArray(payload.items) ? payload.items : [];
         renderMemoryChips();
@@ -1647,6 +1731,18 @@
       sendCommand('override', { action: 'accept_suggestion', label });
       showToast(`Accepted: ${label}`);
     });
+    llmSelector?.addEventListener('change', (event) => {
+      const select = event.target.closest('.llm-selector__select');
+      if (!select || !(select instanceof HTMLSelectElement)) {
+        return;
+      }
+      const role = select.dataset.role;
+      if (!role) {
+        return;
+      }
+      const provider = select.value;
+      sendCommand('llm', { action: 'set', role, provider: provider || null });
+    });
     modeButtons.forEach((btn) => {
       btn.addEventListener('click', () => {
         const next = btn.dataset.mode === 'chat' ? 'chat' : 'talk';
@@ -1897,6 +1993,7 @@
       window.nerion.send('artifact', { action: 'refresh' });
       window.nerion.send('health', { action: 'status' });
       window.nerion.send('settings', { action: 'refresh' });
+      window.nerion.send('llm', { action: 'refresh' });
     }
     window.Nerion = { emit: handleEvent }; // allow manual testing
   }

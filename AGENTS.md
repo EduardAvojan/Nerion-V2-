@@ -1,82 +1,73 @@
-# Repository Guidelines
+# Agent Handbook – Nerion V2 (API-First)
 
-## Project Structure & Module Organization
-- `selfcoder/`: Core engine, CLI (`nerion`, `selfcoder`), planners, analysis, tests under `selfcoder/tests/`.
-- `app/`: Runtime app and chat entrypoints (`nerion-chat`), config, logging.
-- `core/`, `plugins/`, `ops/`, `voice/`, `ui/cli/`: Planning/tooling, verified plugins, security/runtime, STT/TTS, terminal UI.
-- `tests/`: Unit/CLI/smoke/UX/doc suites (`tests/unit`, `tests/cli`, `tests/smoke`, `tests/docs`, `tests/ux`).
-- `scripts/`: Local helpers (e.g., `scripts/run_local.sh`). `config/`, `docs/`: YAML configs and docs.
+> This document is the source of truth for any autonomous or assisted runs inside this repository. Read it before making changes. V2 pivots Nerion away from bundled local LLMs; all workflows below assume hosted providers.
 
-## Build, Test, and Development Commands
-- Setup (editable + dev tools): `pip install -e .[dev]`
-- Run locally (agent): `bash scripts/run_local.sh` or `nerion-chat`
-- CLI help: `nerion --help` • Health: `nerion healthcheck`
-- Lint: `ruff check .` • Auto-fix: `ruff check . --fix`
-- Tests (quiet, from pytest.ini): `pytest`
-- Focus tests: `pytest tests/unit/test_file.py::TestClass::test_case -q`
+## Mission & Guardrails
+- **Goal:** deliver a responsive, self-improving assistant that fronts hosted LLM APIs while keeping user data under explicit control.
+- **Privacy Stance:** nothing leaves the machine unless the user supplied the API key. Never log raw prompts/completions unless `NERION_V2_LOG_PROMPTS=1` is set.
+- **Do Not Reintroduce** offline model pulls, Ollama launch agents, or legacy privacy claims unless the roadmap explicitly adds a “local gateway” adapter.
 
-## Coding Style & Naming Conventions
-- Python 3.9+, 4-space indents, line length 100 (see `[tool.ruff]` in `pyproject.toml`).
-- Use type hints and docstrings for public APIs.
-- Naming: modules/vars/functions `snake_case`; classes `CamelCase`; constants `UPPER_SNAKE_CASE`.
-- Keep patches minimal and scoped; avoid unrelated refactors.
+## Key References
+- `docs/nerion-v2-api.md` – architecture, provider matrix, auth contract, migration checklist.
+- `app/settings.yaml` – runtime defaults (`llm`, `credentials`).
+- `.env.example` – template for required keys.
+- `config/model_catalog.yaml` – API provider registry (`api_providers` node replaces local catalogs).
 
-## Testing Guidelines
-- Framework: `pytest`; test discovery: files `test_*.py`, classes `Test*`, functions `test_*`.
-- Suites live in `selfcoder/tests` and `tests/*` (unit/cli/smoke/ux/docs).
-- Add tests for new behavior and regressions; include at least one smoke or CLI test when touching user flows.
-- No strict coverage threshold enforced; prefer meaningful assertions over line coverage.
+## Repository Layout (V2 context)
+- `app/` – runtime entrypoints, chat engine, provider adapters (Phase 2 will add `app/chat/providers/`).
+- `core/` – planner, tooling, memory glue; update when provider capabilities change.
+- `selfcoder/` – self-improvement engine; keep compatible, but expect future simplifications once API tooling matures.
+- `app/ui/holo-app/` – Electron HOLO shell; must surface API credential state, latency, cost.
+- `tests/` & `selfcoder/tests/` – pytest suites; expand with mocks for remote APIs.
+- `scripts/` – helper scripts; Phase 2 adds `setup_api_env.sh`, retire Ollama helpers.
 
-## Commit & Pull Request Guidelines
-- Commits: imperative and scoped (e.g., `feat(core): add planner retries`, `fix(plugins): handle hash mismatch`).
-- PRs: clear description, linked issues, rationale, before/after notes; include `nerion healthcheck` and relevant test output.
-- Keep PRs small; document risk and rollback if touching security, plugins, or patching logic.
+## Runtime Expectations
+1. Chat engine refuses to start unless at least one credential from `credentials.required` is available.
+2. Provider selection happens via registry; respect per-role defaults (`chat`, `code`, `planner`, `embeddings`).
+3. All network calls must flow through sanctioned adapters with retry/backoff + cost/latency logging.
+4. UI components (HOLO, CLI) should display:
+   - active provider
+   - latency histogram / request cost
+   - credential warnings when keys are missing
+   - interactive provider selector that updates chat/code/planner overrides live
 
-## Security & Configuration Tips
-- Offline-first: do not add network calls without passing the security gate; respect `plugins/allowlist.json`.
-- Opt-in networking only; when needed for dev, use explicit env toggles (e.g., `NERION_ALLOW_NETWORK=1`).
-- Never hardcode secrets; prefer env vars and local configs in `app/settings.yaml`.
+## Permissions & Safety Notes
+- **Network:** V2 assumes outbound HTTPS to provider endpoints; sandbox/run configs must allow these domains. If sandbox denies, fail fast with a clear error.
+- **Filesystem:** keep user secrets out of repo; `.env` stays ignored, `.env.example` is the only checked-in template.
+- **Voice / Electron:** retain current PTT behavior; annotate when a feature now depends on network access (e.g., speech fallback prompts).
 
-## Evolution Log
-- 2025-09-16 — PR-P0: Crash-safe I/O, rotation, schema v3
-  - Affected: `selfcoder/learning/continuous.py`, `app/logging/experience.py`
-  - Prefs writes are atomic; schema bumped to v3 (`selfcoder/learning/jsonschema/prefs_v3.json`).
-  - Log rotation via `NERION_LOG_ROTATE_BYTES` (default 52428800) for `out/experience/log.jsonl`.
-  - Validate: `nerion learn review` updates `out/learning/prefs.json`; append several events and confirm rotation when size > threshold.
-- 2025-09-16 — PR-P1: Robust learning (shrinkage + ESS cap)
-  - Affected: `selfcoder/learning/continuous.py`
-  - Per-intent success rates shrink toward global rates using effective sample size cap (`NERION_LEARN_EFF_N_MAX`, default 1000) to reduce flapping.
-  - Top‑K hysteresis in selection (env: `NERION_LEARN_HYSTERESIS_M`, `NERION_LEARN_MIN_IMPROVEMENT_DELTA`) to avoid noisy swaps.
-  - Validate: run `nerion learn review`; inspect `tool_success_rate_by_intent`, and watch stable preferred tool in prompts under small deltas.
-- 2025-09-16 — PR-P2: A/B decisions + guardrails
-  - New: `selfcoder/learning/abseq.py` (MSPRT), `selfcoder/learning/guardrails.py`.
-  - `continuous.py` computes `experiments_meta` decisions and `guardrails` metrics/breach.
-  - CLI: `nerion learn ab status --refresh` shows config, decisions, guardrails.
-  - Env: `NERION_GUARDRAIL_ERR` (0.10), `NERION_GUARDRAIL_P95` (8000), `NERION_GUARDRAIL_ESC` (0.15).
-- 2025-09-16 — PR-P3: Shadow runs + rollout scaffolding
-  - New: `selfcoder/upgrade/shadow.py`; engine schedules non-blocking shadow replay after turns.
-  - State written to `out/policies/upgrade_state.json` under `shadow` entries.
-  - Env: `NERION_UPGRADE_SHADOW=1` to enable; `NERION_ROLLOUT_PCT` reserved for future staged rollout.
-  - Validate: interact, then check `nerion learn ab status --refresh` (guardrails) and `out/policies/upgrade_state.json` for shadow metrics.
-- 2025-09-16 — PR-P4: Observability + Replay/Export
-  - Health: dashboard now shows ESS, realized epsilon, and intent drift KL.
-  - Learn CLI: `replay --since 30d` and `export --window 30d --out out/learning/report.md`; `reset --intent X` added.
-  - New: `selfcoder/learning/report.py` to summarize rotated logs and render markdown reports.
-- 2025-09-16 — PR-P5: Contextual bandit hook (no behavior change)
-  - `app/parent/driver.py` now passes a small `context` dict (intent, query_len, policy) to `build_master_prompt`.
-  - `app/parent/prompt.build_master_prompt` accepts `context` (ignored for now) for future LinUCB/TS.
-- 2025-09-16 — PR-P6: Privacy & Scope tags; merge policy
-  - Prefs stats now include `scope: {user, workspace, project}`; env: `NERION_SCOPE_WS`, `NERION_SCOPE_PROJECT`.
-  - Global-to-local merge honors scope: learning maps merge only when scope matches; `personalization` always merges.
+## Working Method (for Future Agents)
+1. **Sync**: `git pull --rebase` (main) before starting work. If automation, fetch read-only.
+2. **Branching**: feature branches named `feat/api-*`, `fix/ui-*`, etc. Do not work directly on `main`.
+3. **Plan Tool**: required for multi-step edits. Describe steps and update as tasks finish.
+4. **Implement**: touch only the scope declared in your plan. If you uncover unrelated bugs, open TODOs or issues instead.
+5. **Format/Lint**: `ruff check .` (phase-in, once provider adapters are added). Respect `pyproject.toml` (max line length 100).
+6. **Test**: minimally run `pytest tests/cli -q` + targeted suites impacted by your change. Use mocks for API calls (never hit live endpoints in CI without explicit user request).
+7. **Review**: summarize diffs referencing file:line (e.g., `app/chat/engine.py:42`). Highlight risk areas, follow-up actions.
+8. **Commit**: imperative subject (e.g., `feat(app): add openai provider adapter`). Include relevant test output in commit or PR description.
 
-## Electron HOLO UI Integration Notes (2025-09-22)
-- `app/ui/holo-app/` houses the Electron shell; `src/main.js` spawns `python3 -m app.nerion_chat` with `NERION_UI_CHANNEL=holo-electron` so stdout/stdin act as the IPC bus.
-- `app/chat/ipc_electron.py` maintains chat and command queues, lets Python register per-command handlers, and emits JSON events back to the renderer.
-- `app/chat/ui_controller.py` coordinates incoming commands (memory, learning, upgrade, patch, artifacts, health, settings, PTT overrides) with core services:
-  - Memory drawer actions operate on `SessionCache` and `LongTermMemory`, then emit `memory_session`, `memory_drawer`, `memory_update` events.
-  - Learning panel pulls from `out/learning/` (`prefs.json`, `live.json`, `ab_status.json`) and serves diffs via `learning_diff` events.
-  - Health commands trigger offline diagnostics and surface gate status tiles.
-  - Upgrade offers are sourced from `app/learning/upgrade_agent.readiness_report`.
-- `app/chat/engine.py` instantiates `ElectronCommandRouter` when the channel is enabled, registers Electron handlers, refreshes UI snapshots after each turn, and streams user/assistant messages to the renderer.
-- Voice I/O now emits `chat_turn` events from TTS callbacks so the UI mirrors spoken replies in real time (`app/chat/voice_io.py`).
-- Renderer bootstrap (`app/ui/holo-app/src/renderer.js`) requests initial snapshots (`memory`, `learning`, `upgrade`, `artifact`, `health`) once `window.nerion.ready()` fires, ensuring the dashboard reflects backend state immediately after launch.
+## Testing Matrix (Update as V2 stabilizes)
+| Area | Command | Notes |
+| --- | --- | --- |
+| CLI basic | `pytest tests/cli -q` | ensures planner + prompts use new providers |
+| Planner unit | `pytest tests/unit/test_parent_*.py` | update mocks for API outputs |
+| Selfcoder smoke | `pytest selfcoder/tests/test_smoke.py` | confirm self-improve still works with remote models |
+| HOLO UI | `npm test` (if added) / manual run | verify UI panels ingest API telemetry |
+| Electron bridge | `npm run start` then `python -m app.nerion_chat --ui holo-electron` | ensure signal highlights, settings warnings fire |
+
+## Release Checklist (draft)
+1. Verify `.env` instructions and provider adapters work offline (mock servers) and online (staging keys).
+2. Update README + docs to remove legacy offline claims.
+3. Tag releases `v2.x.y`. Document migration path from classic (link to separate repo).
+4. Publish changelog with cost/latency expectations and supported providers.
+
+## Outstanding Work (Track & Update)
+- [x] Implement provider registry and swap out `app/chat/llm.py` logic.
+- [x] Rip remaining Ollama references (config, scripts, docs).
+- [ ] Add API health diagnostics (`nerion v2 doctor`).
+- [ ] Teach HOLO signal highlights to show latency + cost.
+- [ ] Update CI to mock providers and ensure no secret leakage.
+
+## Final Notes
+- Treat this doc as living documentation. Update it whenever instructions change.
+- If you encounter conflicting directives (user vs. handbook), escalate in chat, log assumptions, and capture follow-up items here for continuity.

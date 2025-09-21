@@ -30,6 +30,7 @@ from .offline_tools import run_healthcheck as _run_healthcheck, run_diagnostics 
 from ..config import load_config
 from selfcoder.learning.continuous import load_prefs as _learning_load_prefs
 from app.learning.upgrade_agent import handle_choice as _upgrade_handle_choice, readiness_report
+from app.chat.providers import get_registry
 
 
 def _parse_timestamp(value) -> Optional[datetime]:
@@ -114,6 +115,7 @@ class ElectronCommandRouter:
         self._upgrade_plan_cache: Dict[str, Dict[str, Any]] = {}
         self._thought_seq = 0
         self._last_metrics_signature: Optional[str] = None
+        self._llm_label_map: Dict[str, str] = {}
 
     # --- plumbing -------------------------------------------------------------
     def set_watcher(self, watcher) -> None:
@@ -139,6 +141,11 @@ class ElectronCommandRouter:
             'muted': bool(getattr(self.state, 'muted', False)),
         }
 
+    def _provider_label(self, provider_id: Optional[str]) -> str:
+        if not provider_id:
+            return 'Auto'
+        return self._llm_label_map.get(provider_id) or str(provider_id)
+
     def emit_phase(self, phase: str, *, reset_thoughts: bool = False) -> None:
         payload = self._state_payload()
         payload['phase'] = phase
@@ -150,6 +157,68 @@ class ElectronCommandRouter:
     def reset_thoughts(self) -> None:
         self._thought_seq = 0
         self.emit_phase('thinking', reset_thoughts=True)
+
+    def emit_llm_options(self) -> None:
+        if not _ipc.enabled():
+            return
+        registry = get_registry()
+        options_by_role = registry.list_role_options()
+        role_order = ['chat', 'code', 'planner', 'embeddings']
+        remaining_roles = [r for r in sorted(options_by_role) if r not in role_order]
+        roles_iterable = role_order + remaining_roles
+        label_map: Dict[str, str] = {}
+        roles_payload: List[Dict[str, Any]] = []
+
+        def _role_label(role: str) -> str:
+            if role == 'chat':
+                return 'Chat'
+            if role == 'code':
+                return 'Code'
+            if role == 'planner':
+                return 'Planner'
+            if role == 'embeddings':
+                return 'Embeddings'
+            return role.capitalize()
+
+        for role in roles_iterable:
+            entries = options_by_role.get(role, [])
+            if not entries:
+                continue
+            env_key = f"NERION_V2_{role.upper()}_PROVIDER"
+            default_id = registry.default_provider(role)
+            active_id = registry.active_provider(role)
+            overridden = bool(os.getenv(env_key))
+            role_options: List[Dict[str, Any]] = []
+            for entry in entries:
+                provider_id = entry.get('provider_id')
+                if not provider_id:
+                    continue
+                display = entry.get('label') or provider_id
+                label_map.setdefault(provider_id, display)
+                role_options.append({
+                    'id': provider_id,
+                    'label': display,
+                    'note': entry.get('note') or '',
+                })
+            if default_id and default_id not in label_map:
+                match = next((e for e in entries if e.get('provider_id') == default_id), None)
+                label_map[default_id] = (match or {}).get('label') or default_id
+            if active_id and active_id not in label_map:
+                match = next((e for e in entries if e.get('provider_id') == active_id), None)
+                label_map[active_id] = (match or {}).get('label') or active_id
+            roles_payload.append({
+                'role': role,
+                'label': _role_label(role),
+                'options': role_options,
+                'default': default_id,
+                'default_label': label_map.get(default_id) if default_id else None,
+                'active': active_id,
+                'active_label': label_map.get(active_id) if active_id else (label_map.get(default_id) if default_id else None),
+                'overridden': overridden and bool(active_id),
+            })
+
+        self._llm_label_map = label_map
+        self._emit('llm_options', {'roles': roles_payload})
 
     def thought_step(self, title: str, detail: Optional[str] = None, *, status: str = 'pending') -> Optional[str]:
         if not title:
@@ -234,7 +303,17 @@ class ElectronCommandRouter:
                 turns = len(self.session_cache.state.get('turns', []))
         subtitle = f"{turns} turns · {session_count} session · {long_count} long-term"
 
-        signature = f"{mode}|{speech_val}|{session_count}|{long_count}|{turns}"
+        registry = get_registry()
+        active_chat = registry.active_provider('chat')
+        active_code = registry.active_provider('code')
+        active_planner = registry.active_provider('planner')
+        metrics.append({'label': 'Chat model', 'value': self._provider_label(active_chat)})
+        if active_code and active_code != active_chat:
+            metrics.append({'label': 'Code model', 'value': self._provider_label(active_code)})
+        if active_planner and active_planner not in {active_chat, active_code}:
+            metrics.append({'label': 'Planner model', 'value': self._provider_label(active_planner)})
+
+        signature = f"{mode}|{speech_val}|{session_count}|{long_count}|{turns}|{active_chat}|{active_code}|{active_planner}"
         if signature == self._last_metrics_signature:
             return
         self._last_metrics_signature = signature
@@ -672,6 +751,43 @@ class ElectronCommandRouter:
             NetworkGate.init(load_config())
             self._emit_health_status()
         self._emit_settings_snapshot(include_options=False)
+
+    # --- llm providers ----------------------------------------------------
+    def handle_llm(self, payload: Dict[str, Any]) -> None:
+        action = str((payload or {}).get('action') or 'set').lower()
+        if action in {'refresh', 'options'}:
+            self.emit_llm_options()
+            self.emit_metrics()
+            return
+        if action != 'set':
+            self._emit_error('llm', f'Action "{action}" not supported yet.')
+            return
+        role = str((payload or {}).get('role') or '').strip().lower()
+        if not role:
+            self._emit_error('llm', 'Role is required.')
+            return
+        raw_provider = (payload or {}).get('provider')
+        provider_id = None
+        if isinstance(raw_provider, str):
+            provider_id = raw_provider.strip() or None
+        elif raw_provider is not None:
+            provider_id = str(raw_provider).strip() or None
+
+        registry = get_registry()
+        role_options = registry.list_role_options().get(role, [])
+        valid_ids = {entry.get('provider_id') for entry in role_options if entry.get('provider_id')}
+        if provider_id and provider_id not in valid_ids:
+            self._emit_error('llm', f'Provider "{provider_id}" not available for role "{role}".')
+            return
+
+        env_key = f"NERION_V2_{role.upper()}_PROVIDER"
+        if provider_id:
+            os.environ[env_key] = provider_id
+        else:
+            os.environ.pop(env_key, None)
+
+        self.emit_llm_options()
+        self.emit_metrics()
 
     # --- learning ---------------------------------------------------------
     def handle_learning(self, payload: Dict[str, Any]) -> None:

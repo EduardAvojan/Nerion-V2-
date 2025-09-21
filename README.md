@@ -1,30 +1,43 @@
-# Nerion (Self-Hosted, Voice-First, Self-Improving)
+# Nerion V2 (API-First, Voice-Forward, Self-Improving)
 
-Nerion is a self-hosted, privacy-first AI agent designed to run entirely offline. It combines a natural, voice-first interface with a powerful, self-evolving core. Nerion can safely analyze, refactor, and improve its own codebase, learn from new information, and automate complex tasks, all while ensuring user data remains completely private and under your control.
+> **Nerion V2 notice (API-first pivot):** this repository tracks the evolution of Nerion toward hosted LLM providers. Follow `docs/nerion-v2-api.md` for the canonical migration plan and provider defaults. Sections below are being refreshed; when guidance conflicts, prefer the V2 docs.
 
-Designed for modularity and security, Nerion is a professional-grade platform that unites a sophisticated AI assistant with a trustworthy, autonomous software engineer.
+Nerion V2 keeps the agent, planner, and safety loops on your machine while delegating language generation to the API providers you configure. You supply the API keys, Nerion streams prompts/responses through secure adapters, and the rest of the runtime (memory, learning, tools, UI) remains local and auditable.
+
+Designed for modularity and explicit consent, Nerion remains a professional-grade platform that unites a voice-first assistant with a self-improving software engineer—now optimized for low-latency hosted models instead of bundled local weights.
 
 ## What is Nerion?
-* **A Private Assistant:** Like Siri or Alexa, but runs 100% locally on your hardware. It manages your tasks, remembers your context, and learns your preferences without ever sending your personal data to the cloud.
-* **An Autonomous Engineer:** Nerion can write, debug, and refactor its own code. You can give it high-level goals in plain English, and it will generate and safely apply the necessary code changes, complete with tests.
-* **A Knowledge Engine:** Nerion can research topics on the web, read documentation, and synthesize information to answer complex questions, building a personalized knowledge base that is unique to you.
+* **A Self-Hosted Orchestrator:** The agent, safety rails, and data stores live on your hardware. Outbound network traffic is limited to the LLM APIs you explicitly enable via environment variables.
+* **An Autonomous Engineer:** Nerion can write, debug, and refactor its own code. You give it high-level goals in plain English, and it generates and safely applies the necessary code changes, complete with tests.
+* **A Knowledge Engine:** Nerion can research topics on the web (when granted), read documentation, and synthesize information into artifacts—building a personalized knowledge base while respecting your configured trust boundaries.
 
 ---
 
-## Quick Start
+## Quick Start (V2)
 
-1.  **Install in Editable Mode**:
-    After creating a virtual environment, run:
+1.  **Install in Editable Mode**
     ```bash
-    pip install -e .
+    pip install -e .[dev]
     ```
-    This makes the `nerion` and `nerion-chat` commands available in your PATH, linked directly to your source code.
+    This links the `nerion` and `nerion-chat` commands to your checkout for fast iteration.
 
-2.  **Configure and Run**:
-    * Set your preferences in `app/settings.yaml` (e.g., microphone, LLM model).
-    * Start the agent with: `bash scripts/run_local.sh`
+2.  **Provide API Credentials**
+    ```bash
+    cp .env.example .env
+    # edit .env and add NERION_V2_OPENAI_KEY / NERION_V2_ANTHROPIC_KEY / optional providers
+    ```
+    Nerion only contacts providers you configure. Missing keys are surfaced in the UI and `nerion doctor`.
 
-3.  **Interact with Nerion**:
+3.  **Adjust Runtime Settings**
+    * `app/settings.yaml` → tweak voice devices, default/fallback providers, and cost/timeouts.
+    * `config/model_catalog.yaml` → review the provider registry (`api_providers`).
+
+4.  **Launch the Agent**
+    * Text/voice shell: `nerion-chat`
+    * Electron HOLO UI: `npm run start` inside `app/ui/holo-app`
+    * Legacy helper script (`scripts/run_local.sh`) still works but simply wraps `nerion-chat` in V2.
+
+5.  **Interact with Nerion**
     * **Voice & Chat:** Hold **SPACE** to talk, or type `> your message` in the terminal.
       - Press and hold records the entire time until you release (true PTT).
       - Press **CapsLock** (or F9/F12) to toggle Speech ON/OFF with a clear on‑screen message.
@@ -119,39 +132,27 @@ Designed for modularity and security, Nerion is a professional-grade platform th
         nerion bench repair --task /path/to/task --max-iters 6
         ```
 
-### Quick Sanity Checks (LLM Automation)
+### Quick Sanity Checks (Provider Routing)
 
-- Chat model pinned by profile (fast → deepseek‑r1:14b):
+- Verify the active chat provider:
   ```bash
-  nerion profile explain --task chat | jq .
-  # expect env includes: "NERION_LLM_MODEL": "deepseek-r1:14b"
+  nerion profile explain --task chat | jq .env.NERION_V2_CHAT_PROVIDER
   ```
-- TS routing picks Qwen (with verbose router line):
+- Run a dry code completion via the provider registry:
   ```bash
-  NERION_ROUTER_VERBOSE=1 nerion plan --llm -f a.ts -i "add header"
-  # expect a one‑liner like: [router] task=code lang=ts model=qwen2.5-coder
+  python - <<'PY'
+  from app.chat.providers import get_registry
+  print(get_registry().generate(role='code', prompt='Reply OK only.').provider)
+  PY
   ```
-- Python routing picks DeepSeek Coder V2:
+- Inspect router decisions in verbose mode:
   ```bash
-  nerion plan --llm -f a.py -i "add docstring"
-  ```
-- Optional autopull (local only):
-  ```bash
-  export NERION_AUTOPULL=1 NERION_ALLOW_NETWORK=1
-  NERION_ROUTER_VERBOSE=1 nerion plan --llm -f a.ts -i "add header"
-  # router will provision a missing preferred model when allowed
+  NERION_ROUTER_VERBOSE=1 nerion plan --llm -f demo.py -i "print('hi')"
   ```
 
 ### Offline Agent Improvements (New)
 - Built-in repair proposer (no cloud): proposes surgical patches from failing logs (imports, NameError typos → safe rename, None/Index/Type/Value errors, numeric tolerance). Integrated shadow‑eval promotes green candidates. Used automatically when no plugin is present.
 - Planner strictness + cache: `nerion plan --llm --json-grammar` enforces JSON plan output (schema-validated) and caches normalized plans in `.nerion/plan_cache.json`.
-- Multiple local model backends: unified coder supports `ollama`, `llama_cpp`, `vllm`, and `exllamav2`. See [docs/models.md](docs/models.md) for setup and `nerion models bench` for quick latency.
-
-Key env vars:
-- `NERION_CODER_BACKEND` = `ollama|llama_cpp|vllm|exllamav2`
-- `NERION_CODER_MODEL`, `NERION_CODER_BASE_URL`, `LLAMA_CPP_MODEL_PATH`, `EXLLAMA_MODEL_DIR`
-- `NERION_JSON_GRAMMAR=1`, `NERION_LLM_STRICT=1`
-
 > For a compact command reference, see the Cheat Sheet: `docs/CHEATSHEET.md`.
 
 ---
@@ -159,7 +160,7 @@ Key env vars:
 ## Features
 
 ### Core Architecture
--   **Local-First & Private:** All core logic, memory, and sensitive data processing occurs on your device.
+-   **Local Control & Explicit Network:** All core logic, memory, and sensitive data processing stay on your device; outbound LLM calls only target providers you configure.
 -   **Sovereign & Controllable:** You own the agent, the code, and the data. All major functions are controllable via CLI and configuration files.
 -   **Modular & Extensible:** A secure plugin system allows for adding new tools, commands, and self-coding capabilities.
 -   **Resilient by Design:** Features defensive programming and graceful degradation to ensure the agent remains operational even if optional components fail.
@@ -366,39 +367,28 @@ These improvements were added to strengthen reliability, clarity, and developer 
 - Parent biasing honors per‑intent rates when detectable (via triage or `NERION_INTENT_HINT`); falls back to global.
 - Bandit strategy knob: `NERION_BANDIT_STRATEGY=greedy|ucb|thompson` with `NERION_BANDIT_UCB_C` for UCB bonus; still supports `NERION_BANDIT_EPSILON`.
 
-### LLM Automation & Provisioning (New)
-- Built‑in repair proposer (offline): proposes surgical patches from failing logs (imports, NameError typos → safe rename, None/Index/Type/Value errors, numeric tolerance). Integrated shadow‑eval promotes green candidates. See tests under `selfcoder/tests/`. Used automatically when no `plugins/repair_diff.py` is present.
-- Planner strict JSON + cache: `nerion plan --llm --json-grammar` enforces JSON plan output (schema‑validated) and caches normalized plans in `.nerion/plan_cache.json`.
-- Multi‑backend coder: unified local backends — `ollama`, `llama_cpp`, `vllm`, `exllamav2`.
-- Task‑aware auto‑select: orchestrator (user mode) auto‑selects a local model family based on the prompt and ensures availability with consent prompts.
-- Consent flows:
-  - Ollama: auto‑pulls model after consent (`NERION_ALLOW_NETWORK=1`).
-  - llama.cpp: uses `config/model_catalog.yaml` to auto‑fill GGUF URL/path and downloads after consent.
-  - vLLM/exllamav2: prints exact local commands/paths. Optional autostart/prepare with `NERION_AUTOSTART_VLLM=1`, `NERION_AUTOSTART_EXL=1`.
-- CLI helpers: `nerion models bench` (latency table), `nerion models ensure --auto` (select + provision). See [docs/models.md](docs/models.md).
+### LLM Providers & Provisioning (V2)
+- Provider registry lives in `config/model_catalog.yaml` under `api_providers`.
+- Runtime defaults (`app/settings.yaml`) define `llm.default_provider`, `llm.fallback_provider`, request timeouts, and per-turn cost ceilings.
+- Environment overrides:
+  - `NERION_V2_DEFAULT_PROVIDER` – primary provider when a role-specific env var is unset.
+  - `NERION_V2_CHAT_PROVIDER`, `NERION_V2_CODE_PROVIDER`, `NERION_V2_PLANNER_PROVIDER`, `NERION_V2_EMBEDDINGS_PROVIDER` – per-role pins.
+  - `NERION_V2_REQUEST_TIMEOUT` – global override for request timeout (seconds).
+- CLI helpers:
+  - `nerion models ensure --provider openai:o4-mini` – set code provider for the session.
+  - `nerion models bench --providers anthropic:claude-3-5-sonnet openai:o4-mini` – measure latency (mocked in CI).
+  - `nerion models router --task code -f demo.py -i "add logging"` – print the router’s provider decision.
+- Diagnostics: `nerion doctor` and HOLO’s health dashboard list missing credentials, quota errors, and recent latency samples.
 
-#### Task‑Aware Router & Profiles (Updated)
-- Router picks coder by file type; prefers installed models, falls back deterministically:
-  - TS/JS (`.ts/.tsx/.js/.jsx/.mjs/.cjs`) → `qwen2.5-coder` → `deepseek-coder-v2` → `starcoder2` → `codellama`
-  - Python/general → `deepseek-coder-v2` → `qwen2.5-coder` → `starcoder2` → `codellama`
-- Integration points:
-  - `plan --llm` (before planner), `chat` (before chat chain)
-  - `patch` (preview/apply/tui) routes by plan `target_file`
-  - `rename`, `batch` routes by first file/root
-- Profiles map to env (scoped):
-  - `llm.chat.model` → `NERION_LLM_MODEL` (default `deepseek-r1:14b`)
-  - `llm.coder.{backend,model,base_url}` → `NERION_CODER_*`
+#### Task-Aware Router & Profiles (V2)
+- Router emits `(provider, model)` pairs and never autoprovisions local weights.
+- Integration points (`plan --llm`, chat engine, patch safe-apply, rename, batch) consult the provider envs before execution.
+- Profiles (`config/profiles.yaml`) influence env vars:
+  - `llm.default_provider` → `NERION_V2_DEFAULT_PROVIDER`
+  - `llm.fallback_provider` → `NERION_V2_FALLBACK_PROVIDER`
+  - `llm.roles.chat|code|planner|embeddings` → `NERION_V2_{ROLE}_PROVIDER`
   - `net.allow: true` → `NERION_ALLOW_NETWORK=1`
-  - Inspect: `nerion profile show` / `nerion profile explain --task chat|code`
-- Quality gates for TS/JS (best‑effort): planner adds `eslint_clean`/`tsc_ok`, orchestrator enforces when tools exist.
-- Router tools:
-  - Explain decision: `nerion models router --task code -f src/app.ts -i "add header"`
-  - Bench with language filter: `nerion models bench --language ts`
-  - A/B harness: `nerion models ab --tasks ts py --retries 1` (ranked by success/time)
-- Telemetry & knobs:
-  - Logs: set `NERION_ROUTER_LOG=1` → `.nerion/router_log.jsonl`
-  - Verbose: set `NERION_ROUTER_VERBOSE=1`
-  - Autopull: set `NERION_AUTOPULL=1` (respects `NERION_ALLOW_NETWORK`)
+- Verbose router logging: set `NERION_ROUTER_VERBOSE=1` for one-line provider summaries; enable `NERION_ROUTER_LOG=1` to persist JSON lines under `.nerion/router_log.jsonl`.
 
 ### Built‑in Repair Proposer (New)
 - Offline fixers: unresolved import, NameError aliases (np/pd), None/Index/Type/Value guards, numeric tolerance; surgical diffs only.
@@ -524,12 +514,12 @@ User vs Developer mode:
 
 ### Docs & Examples
 - Cheatsheet: `docs/CHEATSHEET.md` — quick reference for CLI and flows
-- Models: `docs/models.md` — local backends and provision helpers
-- Voice: `docs/voice_and_hot_reload.md` — offline STT/VAD and TTS reset tips
+- Models: `docs/models.md` — API provider registry, env overrides, and examples
+- V2 overview: `docs/nerion-v2-api.md` — architecture, provider matrix, migration checklist
+- Voice: `docs/voice_and_hot_reload.md` — STT/VAD tuning and TTS reset tips
 - Planner grammar: `docs/planner_grammar.md` — allowed actions, schema, and examples
 - Proposer cookbook: `docs/proposer_cookbook.md` — how to write a repair proposer plugin
 - Troubleshooting: `docs/troubleshooting.md` — common issues and fixes (JS/TS default import conflicts, Node bridge tips)
-- Ollama autostart: `docs/ollama_launchagent.md` — keep the local LLM daemon running on macOS via LaunchAgent
 
 ### Multi‑Language (JS/TS, experimental)
 - Basic JS/TS transforms are supported when applying plans to files with extensions `.js`, `.ts`, `.tsx`:

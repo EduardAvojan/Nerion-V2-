@@ -87,6 +87,7 @@ nerion_tree.txt
 *.log
 *.env
 .env.*
+!/.env.example
 *.key
 *.pem
 nerion_tree.txt
@@ -94,6 +95,7 @@ nerion_tree.txt
 # Env files
 .env
 .env.*
+!/.env.example
 
 # Temp files created by tests or local runs
 tmp/

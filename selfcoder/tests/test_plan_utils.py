@@ -41,11 +41,10 @@ def test_cache_roundtrip(tmp_path: Path):
     assert got == data
 
 
-@pytest.mark.skipif(bool(os.environ.get("NERION_CODER_BASE_URL")), reason="LLM may be available")
+@pytest.mark.skipif(bool(os.environ.get("NERION_V2_CODE_PROVIDER")), reason="LLM may be available")
 def test_llm_strict_raises_when_unavailable():
     os.environ["NERION_LLM_STRICT"] = "1"
     from selfcoder.planner.llm_planner import plan_with_llm
     with pytest.raises(RuntimeError):
         plan_with_llm("add docstring", None)
     os.environ.pop("NERION_LLM_STRICT", None)
-

@@ -1,9 +1,7 @@
-"""LLM-backed planner that asks DeepSeek Coder V2 to produce a structured plan.
+"""Provider-backed planner that requests a structured plan from the configured API coder.
 
-This module is optional and degrades gracefully to the heuristic planner when
-the local model or langchain_ollama is unavailable. When strict mode is
-enabled (NERION_LLM_STRICT=1), failures will raise so the caller can exit
-non-zero instead of silently falling back.
+This module falls back to the heuristic planner when the provider is unavailable unless
+`NERION_LLM_STRICT=1`, in which case the error is surfaced to the caller.
 """
 
 from __future__ import annotations
@@ -16,6 +14,7 @@ from pathlib import Path
 
 from .planner import plan_edits_from_nl as _heuristic_plan
 from selfcoder.plans.schema import ALLOWED_ACTIONS
+from app.parent.coder import Coder
 
 
 _SYSTEM = (
@@ -112,74 +111,10 @@ def plan_with_llm(instruction: str, file: Optional[str] = None) -> Dict[str, Any
     """
     strict = bool(os.getenv("NERION_LLM_STRICT"))
     strict_json = bool(os.getenv("NERION_JSON_GRAMMAR"))
-    # JSON grammar implies strict JSON parsing behavior
     if strict_json:
         strict = True
-    # Auto-select backend/model if requested or not set
-    if os.getenv("NERION_CODER_AUTO") or (not os.getenv("NERION_CODER_BACKEND") and not os.getenv("NERION_CODER_MODEL")):
-        try:
-            from app.parent.selector import auto_select_model  # type: ignore
-            # Optional task-aware preference
-            preferred_family = None
-            try:
-                from app.parent.task_model_picker import rank_families  # type: ignore
-                fams = rank_families(instruction)
-                preferred_family = fams[0] if fams else None
-            except Exception:
-                preferred_family = None
-            choice = auto_select_model()
-            if choice:
-                be, m, base = choice
-                if preferred_family and preferred_family not in (m or "").lower():
-                    for tok in ("deepseek-coder", "qwen2.5-coder", "starcoder2", "codellama"):
-                        if tok in (m or "").lower():
-                            m = preferred_family
-                            break
-                os.environ.setdefault("NERION_CODER_BACKEND", be)
-                os.environ.setdefault("NERION_CODER_MODEL", m)
-                if base:
-                    os.environ.setdefault("NERION_CODER_BASE_URL", base)
-        except Exception:
-            pass
 
-    # Ensure backend/model availability (may prompt user via message when network is off)
-    try:
-        from app.parent.provision import ensure_available  # type: ignore
-        be = os.getenv("NERION_CODER_BACKEND") or "ollama"
-        m = os.getenv("NERION_CODER_MODEL") or "deepseek-coder-v2"
-        # If llama_cpp and URL/PATH not provided, try catalog defaults
-        if be == "llama_cpp" and not (os.getenv("LLAMA_CPP_MODEL_URL") and os.getenv("LLAMA_CPP_MODEL_PATH")):
-            try:
-                from app.parent.model_catalog import resolve  # type: ignore
-                src = resolve("llama_cpp", m)
-                if src and isinstance(src.get("url"), str):
-                    os.environ.setdefault("LLAMA_CPP_MODEL_URL", src["url"]) 
-                    filename = src.get("filename") or src["url"].rsplit("/", 1)[-1]
-                    default_path = str((Path.home() / f".cache/nerion/models/llama.cpp/{filename}").resolve())
-                    os.environ.setdefault("LLAMA_CPP_MODEL_PATH", default_path)
-            except Exception:
-                pass
-        ok, msg = ensure_available(be, m)
-        if not ok and strict:
-            raise RuntimeError(msg)
-    except Exception:
-        if strict:
-            raise
-
-    # Prefer unified multi-backend coder; fallback to DeepSeekCoderV2
-    coder = None
-    try:
-        from app.parent.coder import Coder  # type: ignore
-        coder = Coder(model=os.getenv("NERION_CODER_MODEL") or None,
-                      backend=os.getenv("NERION_CODER_BACKEND") or None)
-    except Exception:
-        try:
-            from app.parent.coder_v2 import DeepSeekCoderV2  # type: ignore
-            coder = DeepSeekCoderV2(model=os.getenv("NERION_CODER_MODEL") or None)
-        except Exception as e:
-            if strict:
-                raise RuntimeError(f"LLM adapter unavailable: {e}")
-            return _heuristic_plan(instruction, file, scaffold_tests=True)
+    coder = Coder(role="code")
     # Compose a compact instruction for Coder V2
     tgt_hint = f" Target file: {file}." if file else ""
     allowed = ", ".join(sorted(ALLOWED_ACTIONS))

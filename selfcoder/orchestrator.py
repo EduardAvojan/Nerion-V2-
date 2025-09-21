@@ -88,33 +88,10 @@ def prepare_for_prompt(instruction: str) -> None:
     if mode != "user":
         return
     # Defaults for user mode
-    os.environ.setdefault("NERION_CODER_AUTO", "1")
     os.environ.setdefault("NERION_JSON_GRAMMAR", "1")
-    # Optional: keep strict so planner errors are visible
     os.environ.setdefault("NERION_LLM_STRICT", "1")
-
-    # Task-aware family preference is handled in llm_planner; here we ensure availability
-    try:
-        # Auto-select if missing
-        if not (os.getenv("NERION_CODER_BACKEND") and os.getenv("NERION_CODER_MODEL")):
-            from app.parent.selector import auto_select_model  # type: ignore
-            choice = auto_select_model()
-            if choice:
-                be, m, base = choice
-                os.environ.setdefault("NERION_CODER_BACKEND", be)
-                os.environ.setdefault("NERION_CODER_MODEL", m)
-                if base:
-                    os.environ.setdefault("NERION_CODER_BASE_URL", base)
-        # Ensure availability; if missing, print consent message (do not raise here)
-        from app.parent.provision import ensure_available  # type: ignore
-        be = os.getenv("NERION_CODER_BACKEND") or "ollama"
-        m = os.getenv("NERION_CODER_MODEL") or "deepseek-coder-v2"
-        ok, msg = ensure_available(be, m)
-        if not ok:
-            print(f"[orchestrator] {msg}")
-    except Exception:
-        # Non-fatal; heuristic planner will still work
-        pass
+    default_provider = os.getenv("NERION_V2_CODE_PROVIDER") or os.getenv("NERION_V2_DEFAULT_PROVIDER") or "openai:o4-mini"
+    os.environ.setdefault("NERION_V2_CODE_PROVIDER", default_provider)
 
 # (imports above)
 

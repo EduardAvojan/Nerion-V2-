@@ -237,7 +237,7 @@ def _register_plan_fallback(sub):
     sp.add_argument("-i", "--instruction", required=True)
     sp.add_argument("-f", "--file")
     sp.add_argument("--llm", action="store_true", help="Use LLM (Coder V2) planner instead of heuristics")
-    sp.add_argument("--coder-model", help="Override coder model name (NERION_CODER_MODEL)")
+    sp.add_argument("--code-provider", help="Override code provider identifier (e.g., openai:o4-mini)")
     sp.add_argument("--apply", action="store_true")
     sp.add_argument("--json-grammar", action="store_true", help="Force JSON-mode decoding for LLM planner (when supported)")
     sp.add_argument("--simulate", action="store_true")
@@ -264,9 +264,9 @@ def _register_plan_fallback(sub):
                     _prep(getattr(args, "instruction", ""))
                 except Exception:
                     pass
-            if getattr(args, "coder_model", None):
+            if getattr(args, "code_provider", None):
                 try:
-                    os.environ["NERION_CODER_MODEL"] = str(args.coder_model)
+                    os.environ["NERION_V2_CODE_PROVIDER"] = str(args.code_provider)
                 except Exception:
                     pass
             if use_llm:

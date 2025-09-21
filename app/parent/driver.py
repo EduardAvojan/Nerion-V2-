@@ -24,6 +24,28 @@ class ParentLLM:
         raise NotImplementedError
 
 
+class _RegistryParentLLM(ParentLLM):
+    """Provider-registry-backed ParentLLM used in Nerion V2."""
+
+    def __init__(self, *, role: str = "planner", temperature: float = 0.1) -> None:
+        self._registry = get_registry()
+        self.role = role
+        self.temperature = float(temperature)
+
+    def complete(self, messages: List[Dict[str, str]]) -> str:  # type: ignore[override]
+        try:
+            resp = self._registry.generate(
+                role=self.role,
+                messages=messages,
+                temperature=self.temperature,
+            )
+        except ProviderNotConfigured as exc:
+            raise RuntimeError(f"Planner provider not configured: {exc}") from exc
+        except ProviderError as exc:
+            raise RuntimeError(f"Planner provider error: {exc}") from exc
+        return resp.text or '{"intent":"error","plan":[],"final_response":null,"confidence":0.0,"requires_network":false}'
+
+
 class ParentDriver:
     def __init__(self, llm: ParentLLM, tools: ToolsManifest, coder_llm: Optional[ParentLLM] = None):
         self.llm = llm
