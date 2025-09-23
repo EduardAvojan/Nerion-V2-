@@ -36,8 +36,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     bench = sp.add_parser("bench", help="measure latency for configured providers")
     bench.add_argument("--providers", nargs="*", default=[
-        "openai:o4-mini",
-        "anthropic:claude-3-5-sonnet",
+        "openai:gpt-5",
+        "google:gemini-2.5-pro",
     ])
 
     def _run_bench(args: argparse.Namespace) -> int:
@@ -51,12 +51,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     bench.set_defaults(func=_run_bench)
 
     ensure = sp.add_parser("ensure", help="set the default code provider")
-    ensure.add_argument("--provider", help="provider identifier (e.g., openai:o4-mini)")
+    ensure.add_argument("--provider", help="provider identifier (e.g., openai:gpt-5)")
 
     def _run_ensure(args: argparse.Namespace) -> int:
         provider_id = args.provider or os.getenv("NERION_V2_CODE_PROVIDER")
         if not provider_id:
-            print("Provide --provider (e.g., openai:o4-mini).")
+            print("Provide --provider (e.g., openai:gpt-5).")
             return 2
         os.environ["NERION_V2_CODE_PROVIDER"] = provider_id
         print(f"Default code provider set to {provider_id}. Persist this in .env for future runs.")

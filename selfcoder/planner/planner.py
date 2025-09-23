@@ -3,9 +3,25 @@
 from __future__ import annotations
 import re
 import uuid
-from typing import Any
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-def plan_from_text(instruction: str, *, target_file: str | None = None) -> dict:
+from selfcoder.planner.utils import attach_brief_metadata
+
+BriefContext = Optional[Dict[str, Any]]
+
+try:
+    from ops.telemetry.events import record_plan as _telemetry_record_plan
+except Exception:  # pragma: no cover - optional telemetry
+    def _telemetry_record_plan(*_args, **_kwargs):  # type: ignore
+        return None
+
+def plan_from_text(
+    instruction: str,
+    *,
+    target_file: str | None = None,
+    brief_context: BriefContext = None,
+) -> dict:
     """
     Small heuristic planner -> returns {"actions": [...]} from a natural instruction.
     Adds support for:
@@ -66,6 +82,21 @@ def plan_from_text(instruction: str, *, target_file: str | None = None) -> dict:
     file_hint: str | None = _target_file_hint(instruction)
     if target_file is None and file_hint:
         target_file = file_hint
+    if brief_context and not target_file:
+        suggestions = brief_context.get("suggested_targets") if isinstance(brief_context, dict) else None
+        if isinstance(suggestions, (list, tuple)):
+            fallback: Optional[str] = None
+            for suggestion in suggestions:
+                if not isinstance(suggestion, str) or not suggestion.strip():
+                    continue
+                suggestion_path = suggestion.strip()
+                if Path(suggestion_path).suffix:
+                    target_file = suggestion_path
+                    break
+                if fallback is None:
+                    fallback = suggestion_path
+            if target_file is None and fallback:
+                target_file = fallback
     created_target = False  # whether this plan will create the target file
 
     # Track underspecified intents to produce clearer clarification messages
@@ -187,13 +218,44 @@ def plan_from_text(instruction: str, *, target_file: str | None = None) -> dict:
     else:
         plan.setdefault("metadata", {}).setdefault("clarify_required", False)
 
+    if brief_context:
+        plan = attach_brief_metadata(plan, brief_context)
+
+    try:
+        meta = {
+            "planner": "heuristic",
+            "actions": len(plan.get("actions") or []),
+        }
+        scaffold_hint = plan.get("metadata", {}).get("scaffold_tests")
+        if scaffold_hint is not None:
+            meta["scaffold_tests"] = bool(scaffold_hint)
+        if target_file:
+            meta["target_file_arg"] = target_file
+        if brief_context and isinstance(brief_context, dict):
+            meta["architect_decision"] = brief_context.get("decision")
+        _telemetry_record_plan(
+            source="selfcoder.planner.heuristic",
+            instruction=instruction,
+            plan=plan,
+            subject=plan.get("target_file"),
+            metadata=meta,
+            tags=["planner", "heuristic"],
+        )
+    except Exception:  # pragma: no cover
+        pass
+
     return plan
 
-def plan_edits_from_nl(instruction: str, file: str | None = None, scaffold_tests: bool = True) -> dict:
+def plan_edits_from_nl(
+    instruction: str,
+    file: str | None = None,
+    scaffold_tests: bool = True,
+    brief_context: BriefContext = None,
+) -> dict:
     """
     Turn a natural-language instruction into a minimal plan dict.
     """
-    plan = plan_from_text(instruction)
+    plan = plan_from_text(instruction, target_file=file, brief_context=brief_context)
     if file:
         plan["target_file"] = file
     # Step 12b: pair code actions with test scaffolds
@@ -228,6 +290,9 @@ def plan_edits_from_nl(instruction: str, file: str | None = None, scaffold_tests
     if file:
         meta["target_file_override"] = file
     plan["metadata"] = meta
+
+    if brief_context:
+        plan = attach_brief_metadata(plan, brief_context)
 
     # Prefer at least one postcondition when tests are scaffolded
     if scaffold_tests:

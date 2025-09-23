@@ -68,6 +68,11 @@ def test_scan_plan_apply_smoke(tmp_path, monkeypatch):
 
     monkeypatch.setattr(si, "run_healthcheck", lambda: True, raising=False)
 
+    monkeypatch.setenv("NERION_VERIFY_SMOKE_CMD", "skip")
+    monkeypatch.setenv("NERION_VERIFY_INTEGRATION_CMD", "skip")
+    monkeypatch.setenv("NERION_VERIFY_UI_CMD", "skip")
+    monkeypatch.setenv("NERION_VERIFY_REG_CMD", "skip")
+
     res = si.apply(pln_path, simulate=True)
     assert res.get("applied") is True
     assert res.get("rolled_back") is False

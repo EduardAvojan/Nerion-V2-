@@ -26,6 +26,10 @@ except Exception:
         return subprocess.run(argv, **{k: v for k, v in kwargs.items() if k in ("cwd","timeout","check","capture_output")})
 import os
 
+from selfcoder.planner.prioritizer import build_planner_context
+from selfcoder.planner.apply_policy import apply_allowed, evaluate_apply_policy
+from selfcoder.planner.utils import attach_brief_metadata
+
 try:
     from selfcoder import healthcheck
 except Exception:
@@ -198,8 +202,17 @@ def _maybe_simulate(args, cmd_name, argv_builder):
         print("\n--- Simulation Report ---")
         print(f"[simulate] Shadow Directory: {shadow}")
         print(f"[simulate] Command exit code: {rc_cmd}")
-        print(f"[simulate] Pytest exit code: {results['pytest']['rc']}")
-        print(f"[simulate] Healthcheck exit code: {results['healthcheck']['rc']}")
+        for name, entry in results.items():
+            label = name.replace("_", " ").title()
+            if name == "pytest":
+                label = "Pytest"
+            elif name == "healthcheck":
+                label = "Healthcheck"
+            if entry.get("skipped"):
+                reason = entry.get("reason") or ""
+                print(f"[simulate] {label} skipped: {reason}")
+            else:
+                print(f"[simulate] {label} exit code: {entry.get('rc')}")
         print(f"--- Diff ---\n{diff['text']}")
 
         out = None
@@ -207,11 +220,10 @@ def _maybe_simulate(args, cmd_name, argv_builder):
             out = {
                 "shadow_dir": str(shadow),
                 "cmd_exit": rc_cmd,
-                "pytest_exit": results["pytest"]["rc"] if not skip_pytest else None,
-                "healthcheck_exit": results["healthcheck"]["rc"] if not skip_healthcheck else None,
                 "changed": changed,
                 "changed_files": changed_files,
                 "diff_text": diff["text"],
+                "checks": results,
             }
 
         if not getattr(args, "simulate_keep", False):
@@ -221,7 +233,12 @@ def _maybe_simulate(args, cmd_name, argv_builder):
         if out is not None:
             print(json.dumps(out, indent=2))
 
-        failed = rc_cmd != 0 or (results["pytest"]["rc"] != 0 if not skip_pytest else False) or (results["healthcheck"]["rc"] != 0 if not skip_healthcheck else False)
+        failed_checks = [
+            name
+            for name, entry in results.items()
+            if not entry.get("skipped") and entry.get("rc") not in (0, None)
+        ]
+        failed = rc_cmd != 0 or bool(failed_checks)
         return 1 if failed else 0
 
     except Exception:
@@ -237,8 +254,9 @@ def _register_plan_fallback(sub):
     sp.add_argument("-i", "--instruction", required=True)
     sp.add_argument("-f", "--file")
     sp.add_argument("--llm", action="store_true", help="Use LLM (Coder V2) planner instead of heuristics")
-    sp.add_argument("--code-provider", help="Override code provider identifier (e.g., openai:o4-mini)")
+    sp.add_argument("--code-provider", help="Override code provider identifier (e.g., openai:gpt-5)")
     sp.add_argument("--apply", action="store_true")
+    sp.add_argument("--force-apply", action="store_true", help="Override apply policy gating")
     sp.add_argument("--json-grammar", action="store_true", help="Force JSON-mode decoding for LLM planner (when supported)")
     sp.add_argument("--simulate", action="store_true")
     sp.add_argument("--simulate-json", action="store_true")
@@ -269,6 +287,15 @@ def _register_plan_fallback(sub):
                     os.environ["NERION_V2_CODE_PROVIDER"] = str(args.code_provider)
                 except Exception:
                     pass
+            brief_context = None
+            try:
+                brief_context = build_planner_context(
+                    args.instruction,
+                    target_file=str(args.file) if args.file else None,
+                )
+            except Exception:
+                brief_context = None
+
             if use_llm:
                 # Route coder/env early and log if verbose
                 try:
@@ -282,7 +309,7 @@ def _register_plan_fallback(sub):
                     if getattr(args, "json_grammar", False):
                         os.environ.setdefault("NERION_JSON_GRAMMAR", "1")
                     from selfcoder.planner.llm_planner import plan_with_llm as _plan_llm
-                    plan = _plan_llm(args.instruction, args.file)
+                    plan = _plan_llm(args.instruction, args.file, brief_context=brief_context)
                 except Exception as e:
                     # If strict mode is active, surface the failure and exit non-zero
                     if os.getenv("NERION_LLM_STRICT"):
@@ -290,16 +317,32 @@ def _register_plan_fallback(sub):
                         return 2
                     # Otherwise, fall back to heuristic planner
                     from selfcoder.planner.planner import plan_edits_from_nl as _nl
-                    plan = _nl(args.instruction, args.file)
+                    plan = _nl(
+                        args.instruction,
+                        args.file,
+                        scaffold_tests=True,
+                        brief_context=brief_context,
+                    )
             else:
                 from selfcoder.planner.planner import plan_edits_from_nl
-                plan = plan_edits_from_nl(args.instruction, args.file)
+                plan = plan_edits_from_nl(
+                    args.instruction,
+                    args.file,
+                    scaffold_tests=True,
+                    brief_context=brief_context,
+                )
             # Sanitize/normalize and cache
             from selfcoder.planner.utils import sanitize_plan, repo_fingerprint, load_plan_cache, save_plan_cache
             root = Path.cwd()
             fp = repo_fingerprint(root)
             target = str(args.file or (plan.get("target_file") or ""))
-            key = f"{fp}:{target}:{args.instruction.strip()}"
+            brief_id = ""
+            if brief_context and isinstance(brief_context, dict):
+                brief_id = str((brief_context.get("brief") or {}).get("id") or "")
+                decision = brief_context.get("decision") or ""
+                if decision:
+                    brief_id = f"{brief_id}:{decision}"
+            key = f"{fp}:{target}:{args.instruction.strip()}:{brief_id}"
             cache_path = root / ".nerion" / "plan_cache.json"
             cache = load_plan_cache(cache_path)
             if key in cache:
@@ -316,6 +359,8 @@ def _register_plan_fallback(sub):
                     save_plan_cache(cache_path, cache)
                 except Exception:
                     pass
+
+            plan = attach_brief_metadata(plan, brief_context)
 
             from selfcoder.orchestrator import run_actions_on_file as _run_actions
             # Print compact, single-line JSON first so tests can parse the first line
@@ -358,6 +403,23 @@ def _register_plan_fallback(sub):
                 target = Path(plan.get("target_file") or (args.file or ""))
                 actions = plan.get("actions") or []
                 if target and actions:
+                    decision = evaluate_apply_policy(plan)
+                    force_apply = getattr(args, "force_apply", False)
+                    if not apply_allowed(decision, force=force_apply):
+                        header = "BLOCK" if decision.is_blocked() else "REVIEW"
+                        print(f"[policy] {header}: apply requires manual approval (policy={decision.policy})")
+                        for reason in decision.reasons:
+                            print(f"[policy] - {reason}")
+                        print("[policy] re-run with --force-apply to override.")
+                        return 2 if decision.requires_manual_review() else 3
+                    if force_apply and decision.is_blocked():
+                        print("[policy] forcing apply despite block decision; proceed with caution")
+                    elif force_apply and decision.requires_manual_review():
+                        print("[policy] forcing apply despite review gate")
+                    else:
+                        print(f"[policy] apply decision: {decision.decision} (policy={decision.policy})")
+                        for reason in decision.reasons:
+                            print(f"[policy] - {reason}")
                     changed = _run_actions(target, actions, dry_run=False)
                     print(f"[plan] applied to {target} ({'changed' if changed else 'no change'})")
             return 0
@@ -613,6 +675,18 @@ def _build_parser() -> argparse.ArgumentParser:
     try:
         from selfcoder.cli_ext import self_improve as _si_cli
         _si_cli.register(sub)
+    except Exception:
+        pass
+
+    try:
+        from selfcoder.cli_ext import telemetry as _telemetry_cli
+        _telemetry_cli.register(sub)
+    except Exception:
+        pass
+
+    try:
+        from selfcoder.cli_ext import architect as _architect_cli
+        _architect_cli.register(sub)
     except Exception:
         pass
 

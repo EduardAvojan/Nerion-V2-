@@ -24,7 +24,7 @@ Designed for modularity and explicit consent, Nerion remains a professional-grad
 2.  **Provide API Credentials**
     ```bash
     cp .env.example .env
-    # edit .env and add NERION_V2_OPENAI_KEY / NERION_V2_ANTHROPIC_KEY / optional providers
+    # edit .env and add NERION_V2_OPENAI_KEY / NERION_V2_GEMINI_KEY / optional providers
     ```
     Nerion only contacts providers you configure. Missing keys are surfaced in the UI and `nerion doctor`.
 
@@ -132,6 +132,57 @@ Designed for modularity and explicit consent, Nerion remains a professional-grad
         nerion bench repair --task /path/to/task --max-iters 6
         ```
 
+## Telemetry & Reflection Fabric (Phase 1)
+
+Nerion now ships a live telemetry backbone so the assistant, operators, and future self-improvement jobs share a single source of truth.
+
+* **Unified event bus:** Every chat, planner, model, and tooling event publishes through the new telemetry bus. Events are durably persisted to `out/telemetry/events.sqlite`, eliminating the need to scrape JSONL logs.
+* **Snapshotting:** `ops.telemetry.snapshots.write_snapshot()` captures git state, active provider defaults, and recent event totals under `out/telemetry/snapshots/` for time-travel audits.
+* **Reflection pipeline:** Run `nerion telemetry reflect` to summarise the latest window (counts, provider latency/cost, anomaly hints, tag clusters). Reports live in `out/telemetry/reflections/`; add `--embed` to persist highlights into the vector store (`out/memory/vector_store.sqlite`).
+* **Scheduling helper:** `nerion telemetry schedule --at tonight --embed` prints cron/launchd examples so reflections can refresh automatically and feed the vector store without manual intervention; the generated command now chains a `nerion telemetry knowledge` export (disable with `--no-knowledge`).
+* **Operator surfaces:** The CLI metrics capsule and HOLO dashboard ingest `TelemetryStore` snapshots, showing active providers, request volume, spend, and current anomalies with inline call-outs. Reflection digests link from the same panels for quick triage.
+* **Memory lessons:** Reflections now pull recent memory journal events so the snapshot highlights what Nerion learned or promoted (`summary.memory`, `lessons` block). The metrics bar shows total memory touches alongside provider stats.
+* **Experiment journal:** Track hypotheses and outcomes with `nerion telemetry experiments log|update|list`; entries live under `out/telemetry/experiments.json` and can link back to specific reflections.
+* **Knowledge graph:** `nerion telemetry knowledge` fuses git churn, dependency analysis, and telemetry failures into `out/telemetry/knowledge_graph.json`. Use `--json` for the full graph (components, edges, hotspot scores) or feed the artifact into downstream planners.
+
+## Architect Brief Generator (Phase 3)
+
+`nerion architect` distils telemetry hotspots, coverage gaps, static-analysis smells, and outstanding roadmap tasks into structured upgrade briefs. Each brief supplies rationale, acceptance criteria, and priority weighting so the planning loop can focus on the riskiest components first. Pass `--json` to integrate the briefs into automations, or tweak inputs with flags like `--window` and `--no-smells`.
+
+- **Policy-aware prioritiser:** Briefs are now scored against your active policy (`safe`/`balanced`/`fast`) with auto/review/block decisions based on risk, effort, and an optional cost budget (`NERION_ARCHITECT_COST_BUDGET`). The JSON output exposes the gating reasons so automation can respect review holds.
+- **Planner context bridge:** `nerion plan`, the self-coding voice loop, and `plan_with_llm` automatically load the top matching brief and feed its signals (component, rationale, anomalies, suggested targets) into the planner prompt. Plans embed the brief metadata under `metadata.architect_brief` so executors and dashboards share the same context.
+
+## Apply Policies & Verification (Phase 4)
+
+- **Autonomous apply gating:** `nerion plan --apply` now checks the architect brief decision (auto/review/block) before writing to disk. Review- and block-gated plans exit early unless you pass `--force-apply`; the CLI prints the policy reasons so operators can respond accordingly. Self-improve runs respect the same policy—set `NERION_SELF_IMPROVE_FORCE=1` or `NERION_SELF_IMPROVE_ALLOW_REVIEW=1` to override when running unattended.
+- **Shared policy helper:** `selfcoder.planner.apply_policy.evaluate_apply_policy()` exposes the gating metadata so other automations (voice loop, HOLO triggers, batch apply) can make consistent decisions based on the active policy profile. Voice self-coding and the learning upgrade agent now consult the same gate (`NERION_UPGRADE_FORCE=1` / `NERION_UPGRADE_ALLOW_REVIEW=1` opt into overrides) before touching the repo.
+- **Expanded post-apply verifier:** After a successful apply, Nerion runs healthchecks plus any optional commands you configure via environment variables:
+  - `NERION_VERIFY_SMOKE_CMD`
+  - `NERION_VERIFY_INTEGRATION_CMD`
+  - `NERION_VERIFY_UI_CMD`
+  - `NERION_VERIFY_REG_CMD`
+
+  Each command honours matching `*_TIMEOUT` overrides (seconds). Failures automatically trigger rollback in CLI/Selfcoder apply flows, and telemetry logs capture the exit status for dashboards.
+- **Smart defaults:** When those environment variables are unset, Nerion auto-detects standard suites—running `pytest tests/smoke -q`, `pytest tests/integration -q`, or `npm run build --prefix app/ui/holo-app` when the corresponding folders exist. Override or disable with the env vars above so CI can pin explicit commands.
+- **Pinned CI defaults:** `.env.example` seeds the verifier commands with `python -m pytest tests/smoke -q` and `python -m pytest tests/cli -q` while leaving UI/regression at `skip`. Update those entries (and matching CI env exports) to reflect your organisation’s pipelines so local runs and automation stay aligned.
+
+## Governor Controls (Phase 5)
+
+- **Centralised execution governor:** All autonomous apply flows (self-improve, `nerion plan --apply`, the learning upgrade agent, and the voice self-coding loop) now consult `selfcoder.governor.evaluate()` before touching the repo. The governor enforces a minimum spacing between runs, hourly/daily rate caps, and configurable execution windows.
+- **Configuration knobs:** Tune the behaviour via `NERION_GOVERNOR_MIN_INTERVAL_MINUTES`, `NERION_GOVERNOR_MAX_RUNS_PER_HOUR`, `NERION_GOVERNOR_MAX_RUNS_PER_DAY`, and `NERION_GOVERNOR_WINDOWS` (`HH:MM-HH:MM` CSV). Drop a `config/governor.yaml` alongside other configs to persist team defaults; per-run overrides come from the same environment variables.
+- **Human override hooks:** Operators can bypass the governor with `--force-governor` (CLI plan/apply) or the existing force flags (`NERION_SELF_IMPROVE_FORCE`, `NERION_UPGRADE_FORCE`, `NERION_PLAN_FORCE_GOVERNOR`, etc.). Setting `NERION_GOVERNOR_OVERRIDE=1` unlocks unattended maintenance windows when the caps would otherwise block.
+- **Stateful telemetry:** Governor decisions are recorded under `out/governor/state.json` and tagged in telemetry events (`kind=governor`) so dashboards surface when throttles trip. Successful applies record executions into the same ledger, enabling precise sliding-window enforcement without querying the full telemetry store.
+
+## Security & Policy Enhancements (Phase 5)
+
+- **Self-mod allowlist:** `config/self_mod_policy.yaml` ships with a directory allowlist so autonomous plans stay within vetted areas of the repo. Extend or tighten the list per project needs (format matches the existing policy DSL). The policy loader now falls back to this file automatically when `.nerion/policy.yaml` is absent, so every apply path inherits the directory guardrails out of the box.
+- **Stronger detection rules:** `selfcoder/security/rules.py` now flags `subprocess.Popen`/`asyncio.create_subprocess_*`, destructive `os.remove`/`pathlib.Path.unlink`, and adds regex sweeps for Slack/GitHub tokens. Findings surface through `selfcoder.security.gate` so preflight reviews and CI fail before risky code lands.
+
+## Evolution Metrics Dashboard (Phase 5)
+
+- **Telemetry snapshot upgrades:** `ops/telemetry/operator.load_operator_snapshot()` aggregates apply success rate, rollback counts, and governor/policy decisions alongside existing prompt/latency stats. Total provider spend for the current window is calculated from provider metrics and exposed to downstream surfaces.
+- **Operator surfaces:** The CLI dashboard (`nerion health dashboard`) prints the new apply/policy/governor summaries, and the HOLO signal highlight capsule inherits the richer metrics payload so velocity and rollback trends are visible at a glance.
+
 ### Quick Sanity Checks (Provider Routing)
 
 - Verify the active chat provider:
@@ -169,6 +220,7 @@ Designed for modularity and explicit consent, Nerion remains a professional-grad
 -   **Safe Self-Coding Engine:** Uses Abstract Syntax Tree (AST) editing for precise and syntactically correct code modifications, not fragile text replacement.
 -   **Safety & Rollback Guard:** Automatically snapshots the codebase before any change. If a post-change healthcheck or test fails, it automatically reverts, ensuring the agent never permanently breaks itself.
 -   **Proactive Self-Improvement:** Can be configured to periodically scan its own codebase for "code smells," vulnerabilities, or areas for improvement, and will autonomously generate plans to upgrade itself.
+-   **Enhanced Simulation Harness:** `--simulate` now captures pytest, healthcheck, and optional lint/type/UI/regression checks in one report. Configure extra steps with `NERION_SIM_LINT_CMD`, `NERION_SIM_TYPE_CMD`, `NERION_SIM_UI_CMD`, and `NERION_SIM_REG_CMD` (set to `skip` to disable). Results flow into artifacts/telemetry so dashboards and planners inherit the same readiness signals.
 -   **Automated Dependency Management:** Can scan for outdated or insecure package dependencies, plan an upgrade path, and safely apply the updates within a sandboxed simulation before finalizing.
 -   **General Knowledge Assimilation:** A powerful, domain-agnostic engine that can research topics, read documentation, and synthesize information from the web. It uses a "Scout" (Search API) and "Analyst" (Web Reader) pipeline to build a rich, personalized knowledge base.
 -   **Advanced Memory System:** Multi-layered memory now ships with namespaced schema v2 storage (optional encryption-at-rest), append-only journaling, hybrid semantic retrieval (BM25 + embeddings), PII/prompt-poison quarantine, automated consolidation with utility-based pruning, and a persistent session cache that promotes repeated lessons into long-term memory.
@@ -375,8 +427,8 @@ These improvements were added to strengthen reliability, clarity, and developer 
   - `NERION_V2_CHAT_PROVIDER`, `NERION_V2_CODE_PROVIDER`, `NERION_V2_PLANNER_PROVIDER`, `NERION_V2_EMBEDDINGS_PROVIDER` – per-role pins.
   - `NERION_V2_REQUEST_TIMEOUT` – global override for request timeout (seconds).
 - CLI helpers:
-  - `nerion models ensure --provider openai:o4-mini` – set code provider for the session.
-  - `nerion models bench --providers anthropic:claude-3-5-sonnet openai:o4-mini` – measure latency (mocked in CI).
+  - `nerion models ensure --provider openai:gpt-5` – set code provider for the session.
+  - `nerion models bench --providers google:gemini-2.5-pro openai:gpt-5` – measure latency (mocked in CI).
   - `nerion models router --task code -f demo.py -i "add logging"` – print the router’s provider decision.
 - Diagnostics: `nerion doctor` and HOLO’s health dashboard list missing credentials, quota errors, and recent latency samples.
 

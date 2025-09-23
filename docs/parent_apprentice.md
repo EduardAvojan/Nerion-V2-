@@ -3,7 +3,7 @@ Parent–Apprentice Architecture (DeepSeek ←→ Nerion)
 
 Overview
 --------
-Nerion (the Apprentice) delegates planning to a Parent LLM (in V2 this is typically a hosted provider such as Anthropic Claude via API), then safely executes the resulting plan using a typed, allow‑listed tool interface.
+Nerion (the Apprentice) delegates planning to a Parent LLM (in V2 this is typically a hosted provider such as Google Gemini via API), then safely executes the resulting plan using a typed, allow‑listed tool interface.
 
 Key Components
 --------------

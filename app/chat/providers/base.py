@@ -9,6 +9,18 @@ import time
 import requests
 import yaml
 
+try:
+    from ops.telemetry.events import (
+        record_completion as _telemetry_record_completion,
+        record_prompt as _telemetry_record_prompt,
+    )
+except Exception:  # pragma: no cover - telemetry optional at runtime
+    def _telemetry_record_prompt(*_args, **_kwargs):  # type: ignore
+        return None
+
+    def _telemetry_record_completion(*_args, **_kwargs):  # type: ignore
+        return None
+
 CONFIG_PATH = os.getenv("NERION_MODEL_CATALOG", "config/model_catalog.yaml")
 SETTINGS_PATH = os.getenv("NERION_SETTINGS_PATH", "app/settings.yaml")
 DEFAULT_TIMEOUT = float(os.getenv("NERION_V2_REQUEST_TIMEOUT", "15"))
@@ -75,10 +87,20 @@ class _ProviderAdapter:
     ) -> LLMResponse:
         raise NotImplementedError
 
+    def embed(
+        self,
+        *,
+        model: str,
+        texts: List[str],
+        timeout: float,
+    ) -> List[List[float]]:
+        """Compute embeddings for ``texts`` using the provider model."""
+        raise NotImplementedError
+
 
 _OPENAI_TEMPERATURE_ALWAYS_DEFAULT = {
-    "o4-mini",
     "gpt-4o-mini",
+    "gpt-5",
 }
 
 
@@ -156,74 +178,44 @@ class _OpenAIAdapter(_ProviderAdapter):
             completion_tokens=usage.get("completion_tokens"),
         )
 
-
-class _AnthropicAdapter(_ProviderAdapter):
-    API_VERSION = "2023-06-01"
-
-    def generate(
+    def embed(
         self,
         *,
         model: str,
-        prompt: Optional[str],
-        temperature: float,
-        max_tokens: Optional[int],
+        texts: List[str],
         timeout: float,
-        messages: Optional[List[Dict[str, str]]] = None,
-        response_format: Optional[str] = None,
-    ) -> LLMResponse:
+    ) -> List[List[float]]:
         self.ensure_ready(model)
-        url = f"{self.endpoint}/messages"
-        formatted: List[Dict[str, str]] = []
-        system_prompt: Optional[str] = None
-        if messages:
-            for item in messages:
-                if not isinstance(item, dict):
-                    continue
-                role = str(item.get("role") or "user").lower()
-                content = item.get("content") or ""
-                if role == "system":
-                    system_prompt = content
-                elif role in {"user", "assistant"}:
-                    formatted.append({"role": role, "content": content})
-        if not formatted:
-            formatted = [{"role": "user", "content": prompt or ""}]
-        payload: Dict[str, Any] = {
-            "model": model,
-            "max_tokens": int(max_tokens or 1024),
-            "messages": formatted,
-            "temperature": max(0.0, min(1.0, float(temperature))),
-        }
-        if system_prompt:
-            payload["system"] = system_prompt
-        if response_format == "json_object":
-            payload["response_format"] = {"type": "json_object"}
+        inputs = [str(text) for text in texts if text is not None]
+        if not inputs:
+            return []
+        url = f"{self.endpoint}/embeddings"
+        payload: Dict[str, Any] = {"model": model, "input": inputs}
         headers = {
-            "x-api-key": self.api_key or "",
-            "anthropic-version": self.API_VERSION,
-            "content-type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
         }
-        started = time.perf_counter()
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=timeout)
-        except requests.RequestException as exc:  # pragma: no cover
-            raise ProviderError(f"Anthropic request failed: {exc}") from exc
-        latency = time.perf_counter() - started
+        except requests.RequestException as exc:  # pragma: no cover - network failures
+            raise ProviderError(f"OpenAI embeddings request failed: {exc}") from exc
         if response.status_code >= 400:
             raise ProviderError(
-                f"Anthropic error {response.status_code}: {response.text.strip()}"
+                f"OpenAI embeddings error {response.status_code}: {response.text.strip()}"
             )
         data = response.json()
-        content = data.get("content") or []
-        text = "\n".join([part.get("text", "") for part in content if isinstance(part, dict)])
-        usage = data.get("usage") or {}
-        return LLMResponse(
-            text=text.strip(),
-            provider="anthropic",
-            model=model,
-            latency_s=latency,
-            prompt_tokens=usage.get("input_tokens"),
-            completion_tokens=usage.get("output_tokens"),
-        )
+        items = data.get("data") or []
+        embeddings: List[List[float]] = []
+        for item in items:
+            vector = item.get("embedding")
+            if isinstance(vector, list):
+                try:
+                    embeddings.append([float(val) for val in vector])
+                except Exception as exc:
+                    raise ProviderError("OpenAI embedding vector contains non-numeric values") from exc
+        if len(embeddings) != len(inputs):
+            raise ProviderError("OpenAI embeddings response missing entries for some inputs")
+        return embeddings
 
 
 class _GoogleAdapter(_ProviderAdapter):
@@ -313,10 +305,18 @@ class _GoogleAdapter(_ProviderAdapter):
             completion_tokens=usage.get("candidatesTokenCount"),
         )
 
+    def embed(
+        self,
+        *,
+        model: str,
+        texts: List[str],
+        timeout: float,
+    ) -> List[List[float]]:
+        raise ProviderError("Embeddings not supported for Google provider yet")
+
 
 _ADAPTERS = {
     "openai": _OpenAIAdapter,
-    "anthropic": _AnthropicAdapter,
     "google": _GoogleAdapter,
 }
 
@@ -433,7 +433,39 @@ class ProviderRegistry:
             or DEFAULT_TIMEOUT
         )
         max_toks = max_tokens or model_spec.get("max_output_tokens")
-        return adapter.generate(
+
+        subject = f"{adapter.name}:{model_name}"
+        base_metadata = {
+            "role": role,
+            "provider": adapter.name,
+            "model": model_name,
+            "temperature": float(temperature),
+            "timeout_s": float(timeout),
+        }
+        if max_toks is not None:
+            try:
+                base_metadata["max_tokens"] = int(max_toks)
+            except Exception:
+                pass
+        if response_format:
+            base_metadata["response_format"] = response_format
+
+        try:
+            prompt_kwargs = {
+                "source": f"app.chat.providers.{adapter.name}",
+                "subject": subject,
+                "metadata": dict(base_metadata),
+                "tags": ["provider", role],
+            }
+            if messages:
+                prompt_kwargs["messages"] = messages
+            else:
+                prompt_kwargs["prompt"] = prompt or ""
+            _telemetry_record_prompt(**prompt_kwargs)
+        except Exception:  # pragma: no cover - do not break provider flow
+            pass
+
+        result = adapter.generate(
             model=model_name,
             prompt=prompt or "",
             temperature=temperature,
@@ -442,6 +474,42 @@ class ProviderRegistry:
             messages=messages,
             response_format=response_format,
         )
+        try:
+            completion_meta = dict(base_metadata)
+            completion_meta.update(
+                {
+                    "latency_ms": int(result.latency_s * 1000),
+                    "prompt_tokens": result.prompt_tokens,
+                    "completion_tokens": result.completion_tokens,
+                    "cost_usd": result.cost_usd,
+                }
+            )
+            _telemetry_record_completion(
+                source=f"app.chat.providers.{adapter.name}",
+                text=result.text,
+                subject=subject,
+                metadata=completion_meta,
+                tags=["provider", role],
+            )
+        except Exception:  # pragma: no cover - telemetry must not break flow
+            pass
+        return result
+
+    def embed(
+        self,
+        texts: List[str],
+        *,
+        provider_override: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> List[List[float]]:
+        adapter, model_name, _model_spec = self.resolve("embeddings", provider_override=provider_override)
+        request_timeout = float(
+            os.getenv("NERION_V2_REQUEST_TIMEOUT")
+            or (self._settings.get("llm") or {}).get("request_timeout_seconds")
+            or DEFAULT_TIMEOUT
+        )
+        embed_timeout = float(timeout or request_timeout)
+        return adapter.embed(model=model_name, texts=list(texts), timeout=embed_timeout)
 
     def active_provider(self, role: str) -> Optional[str]:
         return self._resolve_provider_id(role, use_env=True)

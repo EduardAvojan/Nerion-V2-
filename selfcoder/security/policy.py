@@ -3,6 +3,7 @@
 Policy locations (first found wins):
   - .nerion/policy.yaml
   - config/policy.yaml
+  - config/self_mod_policy.yaml
 
 Schema (keys optional):
   actions:
@@ -25,6 +26,35 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import fnmatch
+
+
+DEFAULT_ALLOW_PATTERNS: List[str] = [
+    "app/**",
+    "core/**",
+    "selfcoder/**",
+    "ops/**",
+    "tests/**",
+    "docs/**",
+    "config/**",
+    "scripts/**",
+    "plugins/**",
+    "ui/**",
+    "voice/**",
+    "tools/**",
+    "app/ui/**",
+    ".github/**",
+    "README.*",
+    "CHANGELOG.*",
+    ".env.example",
+    "*.md",
+    "*.rst",
+    "*.yaml",
+    "*.yml",
+    "*.json",
+    "pyproject.toml",
+    "requirements*.txt",
+    "Dockerfile",
+]
 
 
 def _load_yaml(p: Path) -> Dict[str, Any]:
@@ -71,9 +101,13 @@ def _normalize(schema: Dict[str, Any]) -> Dict[str, Any]:
             'allow': list(data.get('allow_paths') or []),
             'deny': list(data.get('deny_paths') or []),
         }
+    allow_list = [str(x) for x in (paths.get('allow') or []) if isinstance(x, str)]
+    deny_list = [str(x) for x in (paths.get('deny') or []) if isinstance(x, str)]
+    if not allow_list:
+        allow_list = list(DEFAULT_ALLOW_PATTERNS)
     out['paths'] = {
-        'allow': [str(x) for x in (paths.get('allow') or []) if isinstance(x, str)],
-        'deny': [str(x) for x in (paths.get('deny') or []) if isinstance(x, str)],
+        'allow': allow_list,
+        'deny': deny_list,
     }
     # limits
     limits = data.get('limits') or {}
@@ -108,7 +142,11 @@ def load_policy(repo_root: Path, *, explicit_path: Optional[Path] = None) -> Dic
         candidates.append(Path(explicit_path))
     if env_path:
         candidates.append(Path(env_path))
-    candidates.extend([root / '.nerion' / 'policy.yaml', root / 'config' / 'policy.yaml'])
+    candidates.extend([
+        root / '.nerion' / 'policy.yaml',
+        root / 'config' / 'policy.yaml',
+        root / 'config' / 'self_mod_policy.yaml',
+    ])
     for p in candidates:
         data = _load_yaml(Path(p))
         if data:

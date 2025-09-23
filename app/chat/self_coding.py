@@ -3,6 +3,10 @@
 import logging
 from pathlib import Path
 
+from selfcoder.planner.prioritizer import build_planner_context
+from selfcoder.governor import evaluate as governor_evaluate
+from selfcoder.governor import note_execution as governor_note_execution
+
 # Journaling helper (non-fatal on errors)
 try:
     from .. import journal as _journal  # type: ignore
@@ -55,9 +59,15 @@ def run_self_coding_pipeline(instruction: str, speak, listen_once) -> bool:
         from selfcoder.orchestrator import apply_plan
         from selfcoder.healthcheck import run_all
         from selfcoder.vcs import git_ops
+        from selfcoder.planner.apply_policy import apply_allowed, evaluate_apply_policy
 
-        # Build plan
-        plan = _plan_build(instruction, None)
+        # Build plan with architect context when available
+        try:
+            brief_context = build_planner_context(instruction, target_file=None)
+        except Exception:
+            brief_context = None
+
+        plan = _plan_build(instruction, None, brief_context=brief_context)
         if not plan or not plan.get("actions"):
             _journal_append({
                 "kind": "self_coding_no_plan",
@@ -99,6 +109,93 @@ def run_self_coding_pipeline(instruction: str, speak, listen_once) -> bool:
         except Exception:
             within_repo = False
 
+        decision = evaluate_apply_policy(plan)
+        force_apply = False
+        if decision.is_blocked() or decision.requires_manual_review():
+            try:
+                speak(
+                    "Policy check requires manual approval before I apply this plan. Say yes to force, or no to cancel."
+                )
+            except Exception:
+                pass
+            response = listen_once(timeout=10, phrase_time_limit=6)
+            response_clean = (response or "").strip().lower()
+            if response_clean in {"yes", "sure", "ok", "okay", "do it", "force"}:
+                force_apply = True
+                try:
+                    speak("Proceeding with policy override.")
+                except Exception:
+                    pass
+            else:
+                speak_text = (
+                    "Policy gate blocked this change; skipping." if decision.is_blocked() else "Needs review; skipping for now."
+                )
+                try:
+                    speak(speak_text)
+                except Exception:
+                    pass
+                _journal_append(
+                    {
+                        "kind": "self_coding_policy_block",
+                        "instruction": instruction,
+                        "decision": decision.decision,
+                        "reasons": list(decision.reasons),
+                    }
+                )
+                return False
+
+        if not apply_allowed(decision, force=force_apply):
+            _journal_append(
+                {
+                    "kind": "self_coding_policy_block",
+                    "instruction": instruction,
+                    "decision": decision.decision,
+                    "reasons": list(decision.reasons),
+                }
+            )
+            return False
+
+        try:
+            governor_decision = governor_evaluate(
+                "voice.self_coding",
+                override=force_apply,
+            )
+        except Exception:
+            governor_decision = None
+
+        if governor_decision and governor_decision.is_blocked():
+            note = "Governor limits active; cannot apply right now."
+            details = "; ".join(governor_decision.reasons)
+            if details:
+                note += f" ({details})"
+            if governor_decision.next_allowed_local:
+                note += f" Next window {governor_decision.next_allowed_local}."
+            try:
+                speak(note)
+            except Exception:
+                pass
+            _journal_append(
+                {
+                    "kind": "self_coding_governor_block",
+                    "instruction": instruction,
+                    "reasons": list(governor_decision.reasons),
+                    "next_allowed": governor_decision.next_allowed_utc,
+                }
+            )
+            return False
+
+        if governor_decision and governor_decision.override_used:
+            try:
+                speak("Governor override acknowledged. Proceeding.")
+            except Exception:
+                pass
+            _journal_append(
+                {
+                    "kind": "self_coding_governor_override",
+                    "instruction": instruction,
+                }
+            )
+
         # Outside repo: write directly without snapshot/healthcheck
         if not within_repo:
             try:
@@ -107,6 +204,7 @@ def run_self_coding_pipeline(instruction: str, speak, listen_once) -> bool:
                     target.write_text("", encoding="utf-8")
             except Exception:
                 return False
+            governor_note_execution("voice.self_coding")
             apply_plan(plan, dry_run=False)
             logger.info("[SELF-CODING] applied outside-repo file (no healthcheck/rollback)")
             _journal_append({
@@ -126,6 +224,7 @@ def run_self_coding_pipeline(instruction: str, speak, listen_once) -> bool:
         except Exception:
             pass
 
+        governor_note_execution("voice.self_coding")
         changed = apply_plan(plan, dry_run=False)
 
         try:

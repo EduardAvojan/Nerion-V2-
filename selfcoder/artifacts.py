@@ -43,6 +43,7 @@ class SimResult:
     health_ok: Optional[bool] = None
     pytest_out: Optional[str] = None
     health_out: Optional[str] = None
+    checks: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class PlanArtifact:

@@ -81,6 +81,12 @@ from .memory_session import SessionCache
 from . import ipc_electron as _ipc
 from .ui_controller import ElectronCommandRouter
 
+try:
+    from ops.telemetry.events import record_prompt as _telemetry_record_user_prompt
+except Exception:  # pragma: no cover - telemetry optional
+    def _telemetry_record_user_prompt(*_args, **_kwargs):  # type: ignore
+        return None
+
 
 # Lightweight debug helper (enabled when NERION_DEBUG is truthy)
 DEBUG = bool((os.getenv('NERION_DEBUG') or '').strip())
@@ -595,6 +601,7 @@ def run_main_loop(STATE, voice_cfg) -> None:
         _ipc.register_handler('artifact', router.handle_artifact)
         _ipc.register_handler('patch', router.handle_patch)
         _ipc.register_handler('selfcode', router.handle_selfcode)
+        _ipc.register_handler('mode', router.handle_mode)
         with suppress(Exception):
             router.refresh_memory()
             router.handle_learning({'action': 'refresh'})
@@ -742,6 +749,24 @@ def run_main_loop(STATE, voice_cfg) -> None:
                 continue
             if not heard:
                 continue
+
+            try:
+                voice_state = getattr(STATE, 'voice', None)
+                voice_enabled = bool(getattr(voice_state, 'enabled', False)) if voice_state is not None else False
+                input_mode = 'ptt' if voice_enabled and bool(getattr(voice_state, 'ptt', False)) else ('voice' if voice_enabled else 'text')
+                meta = {
+                    'mode': input_mode,
+                    'voice_enabled': voice_enabled,
+                    'ptt': bool(getattr(voice_state, 'ptt', False)) if voice_state is not None else False,
+                }
+                _telemetry_record_user_prompt(
+                    source='app.chat.engine',
+                    prompt=heard,
+                    metadata=meta,
+                    tags=['chat', 'user'],
+                )
+            except Exception:  # pragma: no cover
+                pass
 
             analysis_step: Optional[str] = None
             respond_step: Optional[str] = None
@@ -1005,7 +1030,7 @@ def run_main_loop(STATE, voice_cfg) -> None:
                     continue
                 # Model identity queries → standard answer (avoid provider leakage)
                 if re.search(r"\b(what|which)\s+(language\s+)?model\s+do\s+you\s+use\b|\bwhich\s+model\b|\bwhat\s+model\b", heard, flags=re.I):
-                    out = ("I'm Nerion. I orchestrate the hosted models you've configured—like OpenAI or Anthropic—"
+                    out = ("I'm Nerion. I orchestrate the hosted models you've configured—like OpenAI or Google—"
                            "to answer your requests while keeping control on your device.")
                     print('Nerion:', out)
                     safe_speak(out, watcher)

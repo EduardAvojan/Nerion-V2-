@@ -151,6 +151,7 @@
     llm: {
       roles: [],
     },
+    telemetry: null,
   };
   let standbyTimer = null;
 
@@ -1382,6 +1383,13 @@
         if (payload.subtitle && capsuleSubtitle) {
           capsuleSubtitle.textContent = payload.subtitle;
         }
+        if (payload.telemetry) {
+          state.telemetry = payload.telemetry;
+          const anomalyLines = Array.isArray(payload.telemetry.anomalies) ? payload.telemetry.anomalies : [];
+          if (!state.detailsPinned && anomalyLines.length) {
+            updateExplainability(anomalyLines);
+          }
+        }
         break;
       }
       case 'llm_options': {
@@ -1747,6 +1755,7 @@
       btn.addEventListener('click', () => {
         const next = btn.dataset.mode === 'chat' ? 'chat' : 'talk';
         setInteractionMode(next);
+        sendCommand('mode', { mode: next });
       });
     });
     artifactSpeakButton?.addEventListener('click', () => {

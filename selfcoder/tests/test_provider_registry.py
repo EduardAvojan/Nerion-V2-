@@ -11,13 +11,13 @@ def provider_files(tmp_path, monkeypatch):
         """
 api_providers:
   defaults:
-    code: openai:o4-mini
+    code: openai:gpt-5
   providers:
     openai:
       endpoint: https://api.example.com/v1
       key_env: NERION_V2_OPENAI_KEY
       models:
-        o4-mini:
+        gpt-5:
           roles: [code]
     google:
       endpoint: https://generativelanguage.googleapis.com/v1beta
@@ -30,7 +30,7 @@ api_providers:
     settings.write_text(
         """
 llm:
-  default_provider: openai:o4-mini
+  default_provider: openai:gpt-5
   request_timeout_seconds: 5
 """
     )
@@ -52,7 +52,7 @@ def test_registry_resolves_env_override(provider_files, monkeypatch):
             raise AssertionError("generate should not be called during resolve")
 
     monkeypatch.setenv("NERION_V2_OPENAI_KEY", "sk-test")
-    monkeypatch.setenv("NERION_V2_CODE_PROVIDER", "openai:o4-mini")
+    monkeypatch.setenv("NERION_V2_CODE_PROVIDER", "openai:gpt-5")
     monkeypatch.setitem(provider_base._ADAPTERS, "openai", DummyAdapter)
     catalog, settings = provider_files
     registry = provider_base.ProviderRegistry.from_files(str(catalog), str(settings))
@@ -61,7 +61,7 @@ def test_registry_resolves_env_override(provider_files, monkeypatch):
     assert isinstance(adapter, DummyAdapter)
     assert adapter.endpoint == "https://api.example.com/v1"
     assert adapter.api_key == "sk-test"
-    assert model == "o4-mini"
+    assert model == "gpt-5"
     assert spec["roles"] == ["code"]
 
     provider_base.reset_registry()
@@ -91,7 +91,7 @@ def test_registry_uses_defaults_when_env_missing(provider_files, monkeypatch):
     assert isinstance(adapter, DummyAdapter)
     assert adapter.endpoint == "https://api.example.com/v1"
     assert adapter.api_key == "sk-test"
-    assert model == "o4-mini"
+    assert model == "gpt-5"
     assert spec["roles"] == ["code"]
 
     provider_base.reset_registry()
@@ -131,8 +131,8 @@ def test_list_role_options_and_active_defaults(provider_files, monkeypatch):
     assert any(opt.get('provider_id') == 'google:gemini-2.5-pro' for opt in chat_opts)
     assert all(opt.get('label') for opt in chat_opts)
 
-    assert registry.default_provider('chat') == 'openai:o4-mini'
-    assert registry.active_provider('code') == 'openai:o4-mini'
+    assert registry.default_provider('chat') == 'openai:gpt-5'
+    assert registry.active_provider('code') == 'openai:gpt-5'
     monkeypatch.setenv('NERION_V2_CODE_PROVIDER', 'google:gemini-2.5-pro')
     assert registry.active_provider('code') == 'google:gemini-2.5-pro'
 

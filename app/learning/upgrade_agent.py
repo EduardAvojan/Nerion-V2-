@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -11,6 +12,9 @@ from app.chat.voice_io import safe_speak, listen_once
 from selfcoder.selfaudit import generate_improvement_plan
 from selfcoder.orchestrator import apply_plan
 from selfcoder.analysis.knowledge import index as kb_index
+from selfcoder.planner.apply_policy import apply_allowed, evaluate_apply_policy
+from selfcoder.governor import evaluate as governor_evaluate
+from selfcoder.governor import note_execution as governor_note_execution
 
 STATE_PATH = Path("out/policies/upgrade_state.json")
 _OFFER_COOLDOWN_S = 45  # avoid repeating the prompt too frequently
@@ -93,6 +97,58 @@ def handle_choice(reply: str, watcher=None) -> bool:
     if r in {"upgrade now", "now", "upgrade", "do it", "proceed"}:
         try:
             plan = generate_improvement_plan(Path("."))
+            decision = evaluate_apply_policy(plan)
+
+            def _env_bool(name: str) -> bool:
+                val = os.getenv(name)
+                if val is None:
+                    return False
+                return val.strip().lower() in {"1", "true", "yes", "on"}
+
+            force = _env_bool("NERION_UPGRADE_FORCE")
+            allow_review = _env_bool("NERION_UPGRADE_ALLOW_REVIEW")
+            if not apply_allowed(decision, allow_review=allow_review, force=force):
+                label = "blocked" if decision.is_blocked() else "requires review"
+                reasons = ", ".join(decision.reasons) or "no reasons provided"
+                note = f"Upgrade {label}: {reasons}."
+                print("Nerion:", note)
+                try:
+                    safe_speak(note, watcher)
+                except Exception:
+                    pass
+                return True
+
+            if force and decision.is_blocked():
+                print("[policy] forcing upgrade despite block decision")
+            elif force and decision.requires_manual_review():
+                print("[policy] forcing upgrade despite review gate")
+
+            try:
+                governor_decision = governor_evaluate(
+                    "upgrade_agent.apply",
+                    override=force,
+                )
+            except Exception:
+                governor_decision = None
+
+            if governor_decision and governor_decision.is_blocked():
+                note = "Upgrade postponed: governor limits active."
+                details = ", ".join(governor_decision.reasons)
+                if details:
+                    note += f" ({details})"
+                if governor_decision.next_allowed_local:
+                    note += f" Next window {governor_decision.next_allowed_local}."
+                print("Nerion:", note)
+                try:
+                    safe_speak(note, watcher)
+                except Exception:
+                    pass
+                return True
+
+            if governor_decision and governor_decision.override_used:
+                print("[governor] override flag detected; proceeding under manual override")
+
+            governor_note_execution("upgrade_agent.apply")
             apply_plan(plan, preview=False)
             st["last_upgrade_ts"] = _now()
             st.pop("scheduled_ts", None)

@@ -5,8 +5,18 @@ import sys
 from pathlib import Path
 from difflib import unified_diff
 
+import pytest
+
 from selfcoder import cli
 from selfcoder.orchestrator import apply_plan
+
+
+_RELAXED_POLICY = Path(__file__).parent / "fixtures" / "policy_relaxed.yaml"
+
+
+@pytest.fixture(autouse=True)
+def _relaxed_policy(monkeypatch):
+    monkeypatch.setenv("NERION_POLICY_FILE", str(_RELAXED_POLICY))
 
 
 def _write(p: Path, text: str) -> Path:

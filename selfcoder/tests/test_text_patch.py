@@ -3,8 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 from difflib import unified_diff
 
+import pytest
+
 from selfcoder.actions.text_patch import preview_unified_diff
 from selfcoder.orchestrator import apply_plan
+
+
+_RELAXED_POLICY = Path(__file__).parent / "fixtures" / "policy_relaxed.yaml"
+
+
+@pytest.fixture(autouse=True)
+def _relaxed_policy(monkeypatch):
+    monkeypatch.setenv("NERION_POLICY_FILE", str(_RELAXED_POLICY))
 
 
 def _make_file(rel: str, text: str) -> Path:
@@ -51,4 +61,3 @@ def test_apply_plan_with_unified_diff_dryrun():
     modified = apply_plan(plan, dry_run=True)
     # Should report the file as would-be modified
     assert target.resolve() in [p.resolve() for p in modified]
-

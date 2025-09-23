@@ -17,7 +17,7 @@ class DummyRegistry:
         return LLMResponse(
             text=self.text,
             provider="openai",
-            model="o4-mini",
+            model="gpt-5",
             latency_s=0.1,
         )
 

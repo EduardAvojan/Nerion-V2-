@@ -90,7 +90,7 @@ def prepare_for_prompt(instruction: str) -> None:
     # Defaults for user mode
     os.environ.setdefault("NERION_JSON_GRAMMAR", "1")
     os.environ.setdefault("NERION_LLM_STRICT", "1")
-    default_provider = os.getenv("NERION_V2_CODE_PROVIDER") or os.getenv("NERION_V2_DEFAULT_PROVIDER") or "openai:o4-mini"
+    default_provider = os.getenv("NERION_V2_CODE_PROVIDER") or os.getenv("NERION_V2_DEFAULT_PROVIDER") or "openai:gpt-5"
     os.environ.setdefault("NERION_V2_CODE_PROVIDER", default_provider)
 
 # (imports above)

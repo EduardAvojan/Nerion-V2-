@@ -9,6 +9,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      NERION_VERIFY_SMOKE_CMD: "python -m pytest tests/smoke -q"
+      NERION_VERIFY_INTEGRATION_CMD: "python -m pytest tests/cli -q"
+      NERION_VERIFY_UI_CMD: "skip"
+      NERION_VERIFY_REG_CMD: "skip"
     strategy:
       matrix:
         python-version: ["3.9", "3.11"]
@@ -37,4 +42,3 @@ jobs:
           NERION_TESTING: "1"
         run: |
           pytest -q
-

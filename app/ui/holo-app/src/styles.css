@@ -394,13 +394,9 @@ body[data-phase="explaining"] .suggest::before {
 .stage > .conversation {
   grid-column: 1 / -1;
   max-width: min(760px, 68vw);
-  /* Remove negative top margin to prevent layout compression/overlap */
-  margin: 0 auto 8px;
+  margin: 24px auto 8px;
   width: 100%;
-  /* Keep your visual offset; reserve stacking and isolate effects */
-  transform: translate(150px, -120px);
-  will-change: transform;
-  isolation: isolate;
+  position: relative;
   z-index: 2;
 }
 
@@ -425,6 +421,58 @@ body[data-phase="explaining"] .suggest::before {
     max-width: none;
     margin-left: 0;
     margin-right: 0;
+  }
+}
+
+@media (min-width: 1400px) {
+  .stage {
+    grid-template-columns: minmax(420px, 520px) minmax(520px, 1fr);
+    grid-auto-flow: row dense;
+    align-items: start;
+    gap: 32px 44px;
+  }
+  .stage > .mode-toggle,
+  .stage > .halo,
+  .stage > .llm-selector {
+    grid-column: 1 / -1;
+  }
+  .stage > .data-capsule {
+    grid-column: 1;
+    align-self: start;
+    position: relative;
+    z-index: 3;
+  }
+  .stage > .conversation {
+    grid-column: 2;
+    max-width: none;
+    margin: 0;
+    align-self: start;
+    position: relative;
+    z-index: 2;
+  }
+  .stage > .memory {
+    grid-column: 1;
+    margin-top: 32px;
+  }
+  .stage > .artifacts {
+    grid-column: 2;
+    margin-top: 32px;
+  }
+  .stage > .upgrade {
+    grid-column: 1;
+    margin-top: 32px;
+  }
+  .stage > .learning {
+    grid-column: 2;
+    margin-top: 32px;
+  }
+  .stage > .health {
+    grid-column: 1;
+    margin-top: 32px;
+  }
+  .stage > .settings {
+    grid-column: 2;
+    margin-top: 32px;
   }
 }
 

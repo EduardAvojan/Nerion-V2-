@@ -9,6 +9,18 @@ from pathlib import Path
 from selfcoder import cli
 
 
+_RELAXED_POLICY = Path(__file__).parent / "fixtures" / "policy_relaxed.yaml"
+
+
+def _cli_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("NERION_POLICY_FILE", str(_RELAXED_POLICY))
+    env.setdefault("NERION_GOVERNOR_MIN_INTERVAL_MINUTES", "0")
+    env.setdefault("NERION_GOVERNOR_MAX_RUNS_PER_HOUR", "0")
+    env.setdefault("NERION_GOVERNOR_MAX_RUNS_PER_DAY", "0")
+    return env
+
+
 def test_cli_healthcheck_ok():
     assert cli.main(["healthcheck"]) in (0,)
 
@@ -48,7 +60,7 @@ def test_cli_ext_plan_outputs_valid_json(tmp_path: Path):
         "--file",
         str(target),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=_cli_env())
 
     assert proc.returncode == 0, proc.stderr
 
@@ -74,10 +86,18 @@ def _cli_plan(tmp_path: Path, instruction: str, target: Path) -> Path:
         "--file",
         str(target),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=_cli_env())
     assert proc.returncode == 0, proc.stderr
     plan_path = tmp_path / "plan.json"
-    plan_path.write_text(proc.stdout, encoding="utf-8")
+    plan = json.loads(proc.stdout)
+    meta = plan.setdefault("metadata", {})
+    brief = meta.setdefault("architect_brief", {})
+    brief.setdefault("decision", "auto")
+    brief.setdefault("policy", "fast")
+    reasons = brief.setdefault("reasons", [])
+    if "test auto-approve" not in reasons:
+        reasons.append("test auto-approve")
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
     return plan_path
 
 
@@ -97,7 +117,7 @@ def test_cli_ext_apply_preview_prints_diff_and_makes_no_changes(tmp_path: Path):
         str(plan_path),
         "--preview",
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=_cli_env())
     assert proc.returncode == 0, proc.stderr
 
     # Prefer unified diff markers; allow empty diff if no change was computed
@@ -126,7 +146,7 @@ def test_cli_ext_apply_with_format_healer_strips_trailing_spaces(tmp_path: Path)
         str(plan_path),
         "--heal=format",
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=_cli_env())
     assert proc.returncode == 0, proc.stderr
 
     # Trailing spaces should be removed and file should end with a single newline
@@ -169,7 +189,7 @@ def test_cli_ext_apply_with_isort_healer_orders_imports(tmp_path: Path):
         str(plan_path),
         "--heal=isort",
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=_cli_env())
     assert proc.returncode == 0, proc.stderr
 
     content = target.read_text(encoding="utf-8")
@@ -188,7 +208,7 @@ def test_cli_ext_audit_generates_valid_plan(tmp_path: Path):
         "--root",
         str(tmp_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=_cli_env())
     assert proc.returncode == 0, proc.stderr
 
     # The CLI prints a JSON plan; parse and validate
@@ -210,9 +230,11 @@ def test_cli_ext_audit_schedule_runs_once(tmp_path: Path):
         str(tmp_path),
         "--once",
     ]
-    env = os.environ.copy()
-    env["SELFAUDIT_ENABLE"] = "1"
-    env["SELFAUDIT_INTERVAL"] = "1"
+    env = _cli_env()
+    env.update({
+        "SELFAUDIT_ENABLE": "1",
+        "SELFAUDIT_INTERVAL": "1",
+    })
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
     assert proc.returncode == 0, proc.stderr
 

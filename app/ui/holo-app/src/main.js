@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 
 let mainWindow;
 let tray;
@@ -10,6 +10,40 @@ let pythonBuffer = '';
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 720;
 const PTT_ACCELERATOR = process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space';
+
+function getShellEnv() {
+  return new Promise((resolve, reject) => {
+    const shell = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : 'bash');
+    // For non-Windows, execute `env` in a login shell to get full environment
+    const command = process.platform === 'win32'
+      ? '$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User"); echo "---ENV_START---"; Get-ChildItem env: | Format-Table -HideTableHeaders -AutoSize | Out-String -Width 1024; echo "---ENV_END---"'
+      : `${shell} -lc 'echo "---ENV_START---" && env && echo "---ENV_END---"'`;
+
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`[HOLO] Failed to get shell env: ${stderr}`);
+        return reject(error);
+      }
+      const match = stdout.match(/---ENV_START---([\s\S]*)---ENV_END---/);
+      if (!match || !match[1]) {
+        console.error('[HOLO] Failed to parse shell env output.');
+        return resolve({});
+      }
+      const env = {};
+      match[1].trim().split('\n').forEach(line => {
+        const parts = line.split('=');
+        if (parts.length >= 2) {
+          const key = parts.shift();
+          const value = parts.join('=');
+          if (key && key.trim()) {
+            env[key.trim()] = value.trim();
+          }
+        }
+      });
+      resolve(env);
+    });
+  });
+}
 
 function resolvePreload() {
   return path.join(__dirname, 'preload.js');
@@ -104,7 +138,7 @@ function stripQuotes(value) {
   return value;
 }
 
-function spawnPythonBridge() {
+function spawnPythonBridge(shellEnv = {}) {
   if (pythonProcess) {
     return pythonProcess;
   }
@@ -118,9 +152,10 @@ function spawnPythonBridge() {
   const args = [...entryArgs, ...pyArgs];
   // Ensure we run from the project root so Python can import 'app.nerion_chat'
   const env = {
+    ...shellEnv,
     ...process.env,
     NERION_UI_CHANNEL: 'holo-electron',
-    PYTHONPATH: [projectRoot, process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter),
+    PYTHONPATH: [projectRoot, shellEnv.PYTHONPATH || '', process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter),
   };
 
   pythonProcess = spawn(pythonCmd, args, {
@@ -198,7 +233,12 @@ function registerIpcHandlers() {
   });
 
   ipcMain.on('nerion-ready', () => {
-    spawnPythonBridge();
+    getShellEnv().then(shellEnv => {
+      spawnPythonBridge(shellEnv);
+    }).catch(() => {
+      console.warn('[HOLO] Failed to get shell env, spawning with default env.');
+      spawnPythonBridge(); // Fallback to original behavior
+    });
   });
 }
 
@@ -243,7 +283,12 @@ app.on('ready', () => {
   ensureTray();
   registerIpcHandlers();
   registerShortcuts();
-  spawnPythonBridge();
+  getShellEnv().then(shellEnv => {
+    spawnPythonBridge(shellEnv);
+  }).catch(() => {
+    console.warn('[HOLO] Failed to get shell env, spawning with default env.');
+    spawnPythonBridge(); // Fallback
+  });
 });
 
 app.on('before-quit', () => {

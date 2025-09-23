@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Optional, Tuple
 import os
 
-DEFAULT_CHAT_PROVIDER = os.getenv("NERION_V2_CHAT_PROVIDER") or os.getenv("NERION_V2_DEFAULT_PROVIDER") or "openai:o4-mini"
-DEFAULT_CODE_PROVIDER = os.getenv("NERION_V2_CODE_PROVIDER") or os.getenv("NERION_V2_DEFAULT_PROVIDER") or "openai:o4-mini"
+DEFAULT_CHAT_PROVIDER = os.getenv("NERION_V2_CHAT_PROVIDER") or os.getenv("NERION_V2_DEFAULT_PROVIDER") or "openai:gpt-5"
+DEFAULT_CODE_PROVIDER = os.getenv("NERION_V2_CODE_PROVIDER") or os.getenv("NERION_V2_DEFAULT_PROVIDER") or "openai:gpt-5"
 
 
 def _split_provider(provider_id: str) -> Tuple[str, str]:

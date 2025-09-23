@@ -5,6 +5,7 @@ Nerion enforces a local, repo‑scoped policy to keep self‑coding safe. You ca
 Policy files (first found wins):
 - `.nerion/policy.yaml`
 - `config/policy.yaml`
+- `config/self_mod_policy.yaml` (ships with a default allowlist for self-modification)
 
 Schema (keys optional):
 ```yaml
@@ -39,7 +40,7 @@ Implementation references:
 - Orchestrator integration: `selfcoder/orchestrator.py`
 
 Notes:
-- Paths accept glob patterns. Deny takes precedence over allow when both match.
+- Paths accept glob patterns. Deny takes precedence over allow when both match. The bundled `config/self_mod_policy.yaml` provides a safe default allowlist—copy and edit it if your project needs broader write access.
 - If `actions.allow` is provided, only the listed kinds are allowed; `deny` can still forbid a subset.
 - Limits apply to predicted diffs (bytes per file / total / file count) before any write occurs.
 - Put project‑specific policies under `.nerion/policy.yaml` to avoid shipping them with code.

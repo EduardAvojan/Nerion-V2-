@@ -15,6 +15,16 @@ from pathlib import Path
 from .planner import plan_edits_from_nl as _heuristic_plan
 from selfcoder.plans.schema import ALLOWED_ACTIONS
 from app.parent.coder import Coder
+from selfcoder.planner.utils import attach_brief_metadata
+
+try:
+    from ops.telemetry.events import record_plan as _telemetry_record_plan
+except Exception:  # pragma: no cover - optional telemetry
+    def _telemetry_record_plan(*_args, **_kwargs):  # type: ignore
+        return None
+
+
+BriefContext = Optional[Dict[str, Any]]
 
 
 _SYSTEM = (
@@ -100,7 +110,54 @@ def _normalize_plan_obj(obj: Dict[str, Any], *, instruction: str, file: Optional
     return plan
 
 
-def plan_with_llm(instruction: str, file: Optional[str] = None) -> Dict[str, Any]:
+def _format_brief_context_block(context: Dict[str, Any]) -> str:
+    brief = context.get("brief") if isinstance(context, dict) else None
+    if not isinstance(brief, dict):
+        brief = {}
+    lines = []
+    component = brief.get("component")
+    if component:
+        lines.append(f"Component: {component}")
+    decision = context.get("decision")
+    policy = context.get("policy")
+    if decision:
+        if policy:
+            lines.append(f"Decision: {decision} (policy {policy})")
+        else:
+            lines.append(f"Decision: {decision}")
+    risk = context.get("risk_score")
+    effort = context.get("effort_score")
+    cost = context.get("estimated_cost")
+    metrics = []
+    if risk is not None:
+        metrics.append(f"risk {risk}")
+    if effort is not None:
+        metrics.append(f"effort {effort}")
+    if cost is not None:
+        metrics.append(f"cost ${cost}")
+    if metrics:
+        lines.append("Signals: " + ", ".join(str(m) for m in metrics))
+    summary = brief.get("summary")
+    if summary:
+        lines.append(f"Summary: {summary}")
+    rationale = brief.get("rationale") or []
+    for item in rationale[:2]:
+        lines.append(f"Rationale: {item}")
+    acceptance = brief.get("acceptance_criteria") or []
+    if acceptance:
+        lines.append(f"Acceptance hint: {acceptance[0]}")
+    suggestions = context.get("suggested_targets") or []
+    if suggestions:
+        suggestion_text = ", ".join(str(s) for s in suggestions[:3])
+        lines.append(f"Suggested targets: {suggestion_text}")
+    return "\n".join(lines)
+
+
+def plan_with_llm(
+    instruction: str,
+    file: Optional[str] = None,
+    brief_context: BriefContext = None,
+) -> Dict[str, Any]:
     """Plan code edits using the DeepSeek Coder V2 model.
 
     Behavior:
@@ -116,19 +173,22 @@ def plan_with_llm(instruction: str, file: Optional[str] = None) -> Dict[str, Any
 
     coder = Coder(role="code")
     # Compose a compact instruction for Coder V2
-    tgt_hint = f" Target file: {file}." if file else ""
     allowed = ", ".join(sorted(ALLOWED_ACTIONS))
-    prompt = (
-        f"Instruction: {instruction.strip()}\n"
-        f"{tgt_hint}\n"
-        f"Emit ONLY JSON. Allowed action kinds: {allowed}. "
-        f"Use payloads with minimal keys."
+    prompt_parts = []
+    if brief_context:
+        prompt_parts.append("Architect brief context:\n" + _format_brief_context_block(brief_context))
+    prompt_parts.append(f"Instruction: {instruction.strip()}")
+    if file:
+        prompt_parts.append(f"Target file hint: {file}")
+    prompt_parts.append(
+        f"Emit ONLY JSON. Allowed action kinds: {allowed}. Use payloads with minimal keys."
     )
+    prompt = "\n\n".join(part for part in prompt_parts if part)
     txt = coder.complete_json(prompt, system=_SYSTEM)
     if not txt:
         if strict:
             raise RuntimeError("LLM returned no content (is the model running?)")
-        return _heuristic_plan(instruction, file, scaffold_tests=True)
+        return _heuristic_plan(instruction, file, scaffold_tests=True, brief_context=brief_context)
 
     raw = _extract_json_block(txt)
     if raw is None and strict_json:
@@ -142,14 +202,14 @@ def plan_with_llm(instruction: str, file: Optional[str] = None) -> Dict[str, Any
     except Exception:
         if strict:
             raise RuntimeError("LLM returned invalid JSON plan")
-        return _heuristic_plan(instruction, file, scaffold_tests=True)
+        return _heuristic_plan(instruction, file, scaffold_tests=True, brief_context=brief_context)
 
     plan = _normalize_plan_obj(obj, instruction=instruction, file=file)
     # If no actions made it through filtering, fall back to heuristic
     if not plan.get("actions"):
         if strict:
             raise RuntimeError("LLM plan contained no allowed actions")
-        return _heuristic_plan(instruction, file, scaffold_tests=True)
+        return _heuristic_plan(instruction, file, scaffold_tests=True, brief_context=brief_context)
     # Add a default postcondition if none present
     if not plan.get("postconditions"):
         posts = ["no_unresolved_imports", "tests_collect"]
@@ -163,6 +223,31 @@ def plan_with_llm(instruction: str, file: Optional[str] = None) -> Dict[str, Any
         except Exception:
             pass
         plan["postconditions"] = posts
+
+    if brief_context:
+        plan = attach_brief_metadata(plan, brief_context)
+
+    try:
+        meta = {
+            "planner": "llm",
+            "strict": bool(strict),
+            "strict_json": bool(strict_json),
+            "actions": len(plan.get("actions") or []),
+        }
+        if file:
+            meta["target_file_arg"] = file
+        if brief_context and isinstance(brief_context, dict):
+            meta["architect_decision"] = brief_context.get("decision")
+        _telemetry_record_plan(
+            source="selfcoder.planner.llm",
+            instruction=instruction,
+            plan=plan,
+            subject=plan.get("target_file"),
+            metadata=meta,
+            tags=["planner", "llm"],
+        )
+    except Exception:  # pragma: no cover
+        pass
     return plan
 
 __all__ = ["plan_with_llm"]

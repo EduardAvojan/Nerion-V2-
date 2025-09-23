@@ -1,0 +1,15 @@
+policy:
+  paths:
+    allow:
+      - "**"
+  actions:
+    allow: []
+    deny: []
+  limits:
+    max_file_bytes: 0
+    max_total_bytes: 0
+    max_files: 0
+  secrets:
+    block: false
+  network:
+    block_requests: false

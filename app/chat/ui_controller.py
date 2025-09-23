@@ -20,6 +20,7 @@ import datetime as dt
 from selfcoder.selfaudit import generate_improvement_plan as _generate_upgrade_plan
 
 from ops.security.net_gate import NetworkGate
+from ops.telemetry import load_operator_snapshot, summarize_snapshot
 
 from .memory_session import SessionCache
 from .memory_bridge import LongTermMemory
@@ -116,6 +117,9 @@ class ElectronCommandRouter:
         self._thought_seq = 0
         self._last_metrics_signature: Optional[str] = None
         self._llm_label_map: Dict[str, str] = {}
+        self._interaction_override: Optional[str] = None
+        self._telemetry_summary_cache: Optional[Dict[str, Any]] = None
+        self._telemetry_summary_ts: float = 0.0
 
     # --- plumbing -------------------------------------------------------------
     def set_watcher(self, watcher) -> None:
@@ -135,8 +139,11 @@ class ElectronCommandRouter:
 
     def _state_payload(self) -> Dict[str, Any]:
         voice = getattr(self.state, 'voice', None)
+        mode = 'talk' if getattr(voice, 'ptt', False) else 'chat'
+        if self._interaction_override in {'talk', 'chat'}:
+            mode = self._interaction_override
         return {
-            'interaction_mode': 'talk' if getattr(voice, 'ptt', False) else 'chat',
+            'interaction_mode': mode,
             'speech_enabled': bool(getattr(voice, 'enabled', True)),
             'muted': bool(getattr(self.state, 'muted', False)),
         }
@@ -145,6 +152,23 @@ class ElectronCommandRouter:
         if not provider_id:
             return 'Auto'
         return self._llm_label_map.get(provider_id) or str(provider_id)
+
+    def _fetch_telemetry_summary(self, max_age: float = 60.0) -> Optional[Dict[str, Any]]:
+        if not _ipc.enabled():
+            return None
+        now = time.time()
+        if self._telemetry_summary_cache and (now - self._telemetry_summary_ts) < max_age:
+            return self._telemetry_summary_cache
+        try:
+            snapshot = load_operator_snapshot()
+            summary = summarize_snapshot(snapshot)
+            summary['snapshot'] = snapshot
+            self._telemetry_summary_cache = summary
+        except Exception:
+            summary = None
+            self._telemetry_summary_cache = None
+        self._telemetry_summary_ts = now
+        return summary
 
     def emit_phase(self, phase: str, *, reset_thoughts: bool = False) -> None:
         payload = self._state_payload()
@@ -313,11 +337,29 @@ class ElectronCommandRouter:
         if active_planner and active_planner not in {active_chat, active_code}:
             metrics.append({'label': 'Planner model', 'value': self._provider_label(active_planner)})
 
-        signature = f"{mode}|{speech_val}|{session_count}|{long_count}|{turns}|{active_chat}|{active_code}|{active_planner}"
+        telemetry_summary = self._fetch_telemetry_summary()
+        if telemetry_summary:
+            telemetry_metrics = telemetry_summary.get('metrics') or []
+            metrics.extend(telemetry_metrics)
+            subtitle = telemetry_summary.get('subtitle') or subtitle
+
+        max_metrics = 8
+        if len(metrics) > max_metrics:
+            metrics = metrics[:max_metrics]
+
+        payload = {'items': metrics, 'subtitle': subtitle}
+        if telemetry_summary:
+            payload['telemetry'] = telemetry_summary
+
+        signature_payload = {
+            'items': payload['items'],
+            'subtitle': subtitle,
+        }
+        signature = json.dumps(signature_payload, sort_keys=True, default=str)
         if signature == self._last_metrics_signature:
             return
         self._last_metrics_signature = signature
-        self._emit('metrics', {'items': metrics, 'subtitle': subtitle})
+        self._emit('metrics', payload)
 
     def _emit_error(self, code: str, message: str) -> None:
         self._emit('error', {'code': code, 'message': message})
@@ -626,6 +668,7 @@ class ElectronCommandRouter:
         state_val = str((payload or {}).get('state') or '').strip().lower()
         target = str((payload or {}).get('target') or '').strip().lower()
         if state_val == 'pressed':
+            self._interaction_override = None
             if callable(self._ptt_press_cb):
                 with suppress(Exception):
                     self._ptt_press_cb()
@@ -634,6 +677,7 @@ class ElectronCommandRouter:
                 with suppress(Exception):
                     self._ptt_release_cb()
         elif state_val == 'toggle':
+            self._interaction_override = None
             enabled = self.state.toggle_speech()
             self._emit('state', {
                 'phase': 'listening' if enabled else 'standby',
@@ -642,11 +686,22 @@ class ElectronCommandRouter:
             })
         elif state_val == 'toggle_mute' or target == 'mute':
             muted = self.state.toggle_mute()
+            self._interaction_override = None if not muted else self._interaction_override
             self._emit('state', {
                 'phase': 'muted' if muted else 'listening',
                 'interaction_mode': 'talk',
                 'muted': muted,
             })
+
+    def handle_mode(self, payload: Dict[str, Any]) -> None:
+        mode = str((payload or {}).get('mode') or '').strip().lower()
+        if mode not in {'chat', 'talk'}:
+            return
+        self._interaction_override = mode if mode == 'chat' else None
+        snapshot = self._state_payload()
+        snapshot['phase'] = 'standby'
+        snapshot['ts'] = int(time.time() * 1000)
+        self._emit('state', snapshot)
 
     def handle_override(self, payload: Dict[str, Any]) -> None:
         action = str((payload or {}).get('action') or '').strip().lower()

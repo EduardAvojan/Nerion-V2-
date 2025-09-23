@@ -17,6 +17,14 @@ from ops.telemetry.logger import log
 from datetime import datetime, timezone
 from selfcoder.scoring import score_plan
 from selfcoder.artifacts import PlanArtifact, SimResult, save_artifact
+from selfcoder.planner.prioritizer import build_planner_context
+from selfcoder.planner.apply_policy import (
+    apply_allowed,
+    evaluate_apply_policy,
+)
+from selfcoder.planner.utils import attach_brief_metadata
+from selfcoder.governor import evaluate as governor_evaluate
+from selfcoder.governor import note_execution as governor_note_execution
 
 from selfcoder import healthcheck
 from selfcoder.orchestrator import run_actions_on_file
@@ -104,9 +112,11 @@ def _maybe_simulate(args, cmd_name, argv_builder):
 
     # Score the plan using simulation signals and save an artifact
     try:
-        pytest_rc = results["pytest"]["rc"] if not skip_pytest else None
-        health_rc = results["healthcheck"]["rc"] if not skip_healthcheck else None
-        health_ok = (health_rc == 0) if (health_rc is not None) else None
+        pytest_entry = results.get("pytest", {})
+        health_entry = results.get("healthcheck", {})
+        pytest_rc = None if pytest_entry.get("skipped") else pytest_entry.get("rc")
+        health_rc = None if health_entry.get("skipped") else health_entry.get("rc")
+        health_ok = health_entry.get("ok") if not health_entry.get("skipped") else True
         files_touched = [str(x) for x in changed_files]
         diff_size = len(diff.get("text", "")) if isinstance(diff.get("text"), str) else None
 
@@ -118,6 +128,7 @@ def _maybe_simulate(args, cmd_name, argv_builder):
             "health_ok": health_ok,
             "files_touched": files_touched,
             "diff_size": diff_size,
+            "checks": results,
         }
         score, why = score_plan(sim_plan, sim_summary)
         print(f"[SCORE] {score} ({why})")
@@ -128,7 +139,13 @@ def _maybe_simulate(args, cmd_name, argv_builder):
             rationale=why,
             plan=sim_plan,
             files_touched=files_touched,
-            sim=SimResult(pytest_rc=pytest_rc, health_ok=health_ok),
+            sim=SimResult(
+                pytest_rc=pytest_rc,
+                health_ok=health_ok,
+                pytest_out=pytest_entry.get("stdout"),
+                health_out=health_entry.get("stdout"),
+                checks=results,
+            ),
             meta={"shadow_cmd_rc": rc_cmd},
         )
         save_artifact(artifact)
@@ -139,8 +156,17 @@ def _maybe_simulate(args, cmd_name, argv_builder):
     print("\n--- Simulation Report ---")
     print(f"[simulate] Shadow Directory: {shadow}")
     print(f"[simulate] Command exit code: {rc_cmd}")
-    print(f"[simulate] Pytest exit code: {results['pytest']['rc']}")
-    print(f"[simulate] Healthcheck exit code: {results['healthcheck']['rc']}")
+    for name, entry in results.items():
+        label = name.replace("_", " ").title()
+        if name == "pytest":
+            label = "Pytest"
+        elif name == "healthcheck":
+            label = "Healthcheck"
+        if entry.get("skipped"):
+            reason = entry.get("reason") or ""
+            print(f"[simulate] {label} skipped: {reason}")
+        else:
+            print(f"[simulate] {label} exit code: {entry.get('rc')}")
     print(f"--- Diff ---\n{diff['text']}")
 
     out = None
@@ -148,11 +174,10 @@ def _maybe_simulate(args, cmd_name, argv_builder):
         out = {
             "shadow_dir": str(shadow),
             "cmd_exit": rc_cmd,
-            "pytest_exit": results["pytest"]["rc"] if not skip_pytest else None,
-            "healthcheck_exit": results["healthcheck"]["rc"] if not skip_healthcheck else None,
             "changed": changed,
             "changed_files": changed_files,
             "diff_text": diff["text"],
+            "checks": results,
         }
 
     if not getattr(args, "simulate_keep", False):
@@ -162,7 +187,12 @@ def _maybe_simulate(args, cmd_name, argv_builder):
     if out is not None:
         print(json.dumps(out, indent=2))
 
-    failed = rc_cmd != 0 or (results["pytest"]["rc"] != 0 if not skip_pytest else False) or (results["healthcheck"]["rc"] != 0 if not skip_healthcheck else False)
+    failed_checks = [
+        name
+        for name, entry in results.items()
+        if not entry.get("skipped") and entry.get("rc") not in (0, None)
+    ]
+    failed = rc_cmd != 0 or bool(failed_checks)
     return 1 if failed else 0
 
 
@@ -200,6 +230,14 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
     # Build plan (LLM or heuristic), then sanitize and cache
     plan: dict
+    brief_context = None
+    try:
+        brief_context = build_planner_context(
+            args.instruction,
+            target_file=str(args.file) if args.file else None,
+        )
+    except Exception:
+        brief_context = None
     use_llm = bool(getattr(args, "llm", False))
     if use_llm:
         # User-friendly prep and strict knobs for LLM mode
@@ -214,17 +252,27 @@ def cmd_plan(args: argparse.Namespace) -> int:
             os.environ.setdefault("NERION_JSON_GRAMMAR", "1")
         try:
             from selfcoder.planner.llm_planner import plan_with_llm as _plan_llm
-            plan = _plan_llm(args.instruction, args.file)
+            plan = _plan_llm(args.instruction, args.file, brief_context=brief_context)
         except Exception as e:
             # If strict mode is active, surface the failure and exit non-zero
             if os.getenv("NERION_LLM_STRICT"):
                 print(f"[plan] LLM planner failed: {e}", file=sys.stderr)
                 return 2
             from selfcoder.planner.planner import plan_edits_from_nl as _nl
-            plan = _nl(args.instruction, args.file, scaffold_tests=getattr(args, "scaffold_tests", True))
+            plan = _nl(
+                args.instruction,
+                args.file,
+                scaffold_tests=getattr(args, "scaffold_tests", True),
+                brief_context=brief_context,
+            )
     else:
         from selfcoder.planner.planner import plan_edits_from_nl
-        plan = plan_edits_from_nl(args.instruction, args.file, scaffold_tests=getattr(args, "scaffold_tests", True))
+        plan = plan_edits_from_nl(
+            args.instruction,
+            args.file,
+            scaffold_tests=getattr(args, "scaffold_tests", True),
+            brief_context=brief_context,
+        )
 
     # Sanitize and cache plan (keyed by repo fingerprint, target, instruction)
     try:
@@ -232,7 +280,13 @@ def cmd_plan(args: argparse.Namespace) -> int:
         root = Path.cwd()
         fp = repo_fingerprint(root)
         target = str(args.file or (plan.get("target_file") or ""))
-        key = f"{fp}:{target}:{args.instruction.strip()}"
+        brief_id = ""
+        if brief_context and isinstance(brief_context, dict):
+            brief_id = str((brief_context.get("brief") or {}).get("id") or "")
+            decision = brief_context.get("decision") or ""
+            if decision:
+                brief_id = f"{brief_id}:{decision}"
+        key = f"{fp}:{target}:{args.instruction.strip()}:{brief_id}"
         cache_path = root / ".nerion" / "plan_cache.json"
         cache = load_plan_cache(cache_path)
         if key in cache:
@@ -253,6 +307,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
     except Exception:
         # best-effort; keep original plan
         pass
+
+    plan = attach_brief_metadata(plan, brief_context)
 
     # Print compact JSON first so tests/parsers can read the first line
     print(json.dumps(plan, separators=(",", ":"), ensure_ascii=False))
@@ -279,6 +335,72 @@ def cmd_plan(args: argparse.Namespace) -> int:
             print("[apply] no target_file provided; nothing applied", file=sys.stderr)
             return 1
 
+        force_apply = getattr(args, "force_apply", False)
+        governor_override = force_apply or getattr(args, "force_governor", False)
+        decision = evaluate_apply_policy(plan)
+        try:
+            log(
+                "APPLY_POLICY",
+                "cli.plan",
+                {
+                    "decision": decision.decision,
+                    "policy": decision.policy,
+                    "reasons": list(decision.reasons),
+                },
+            )
+        except Exception:
+            pass
+
+        if not apply_allowed(decision, force=force_apply):
+            header = "BLOCK" if decision.is_blocked() else "REVIEW"
+            print(f"[policy] {header}: apply requires manual approval (policy={decision.policy})")
+            for reason in decision.reasons:
+                print(f"[policy] - {reason}")
+            print('[policy] re-run with --force-apply to override.')
+            return 3 if decision.is_blocked() else 2
+
+        if force_apply and decision.is_blocked():
+            print("[policy] forcing apply despite block decision; proceed with caution")
+        elif force_apply and decision.requires_manual_review():
+            print("[policy] forcing apply despite review gate")
+        else:
+            print(f"[policy] apply decision: {decision.decision} (policy={decision.policy})")
+            for reason in decision.reasons:
+                print(f"[policy] - {reason}")
+
+        governor_decision = None
+        try:
+            governor_decision = governor_evaluate(
+                "cli.plan.apply",
+                override=governor_override,
+            )
+        except Exception:
+            governor_decision = None
+
+        if governor_decision and governor_decision.is_blocked():
+            try:
+                log(
+                    "GOVERNOR",
+                    "cli.plan",
+                    {
+                        "decision": governor_decision.code,
+                        "reasons": list(governor_decision.reasons),
+                        "next_allowed": governor_decision.next_allowed_utc,
+                    },
+                )
+            except Exception:
+                pass
+            print(f"[governor] BLOCK: {governor_decision.code}")
+            for reason in governor_decision.reasons:
+                print(f"[governor] - {reason}")
+            if governor_decision.next_allowed_local:
+                print(f"[governor] next allowed at {governor_decision.next_allowed_local}")
+            print('[governor] re-run with --force-governor or --force-apply to override.')
+            return 4
+
+        if governor_decision and governor_decision.override_used:
+            print("[governor] override flag detected; proceeding under manual override")
+
         def _do_apply() -> bool:
             changed = run_actions_on_file(Path(target), actions, dry_run=False)
             print(f"[apply] {'wrote' if changed else 'no change needed'}: {target}")
@@ -286,11 +408,59 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
         def _do_check() -> bool:
             res = healthcheck.run_all()
-            ok = bool(res[0]) if isinstance(res, tuple) else bool(res)
-            print(f"[apply] post-check healthcheck: {'OK' if ok else 'FAIL'}")
-            return ok
+            health_ok = bool(res[0]) if isinstance(res, tuple) else bool(res)
+            print(f"[apply] post-check healthcheck: {'OK' if health_ok else 'FAIL'}")
 
-        return 0 if _apply_with_rollback("pre-apply auto-rollback (plan)", _do_apply, _do_check) else 1
+            from selfcoder.verifier import failed_checks, run_post_apply_checks
+
+            verify_results = run_post_apply_checks(Path.cwd())
+            try:
+                log(
+                    "VERIFY",
+                    "cli.plan",
+                    {
+                        "health_ok": health_ok,
+                        "checks": {
+                            name: {
+                                "rc": entry.get("rc"),
+                                "skipped": entry.get("skipped"),
+                                "reason": entry.get("reason"),
+                                "duration": entry.get("duration"),
+                            }
+                            for name, entry in verify_results.items()
+                        },
+                    },
+                )
+            except Exception:
+                pass
+
+            for name, entry in verify_results.items():
+                label = name.replace("_", " ").title()
+                if entry.get("skipped"):
+                    reason = entry.get("reason") or ""
+                    print(f"[verify] {label} skipped: {reason}")
+                else:
+                    print(f"[verify] {label} exit code: {entry.get('rc')}")
+
+            failed = failed_checks(verify_results)
+            return health_ok and not failed
+
+        governor_note_execution("cli.plan.apply")
+
+        rc = _apply_with_rollback("pre-apply auto-rollback (plan)", _do_apply, _do_check)
+        if governor_decision:
+            try:
+                log(
+                    "GOVERNOR",
+                    "cli.plan",
+                    {
+                        "decision": governor_decision.code,
+                        "override": governor_decision.override_used,
+                    },
+                )
+            except Exception:
+                pass
+        return 0 if rc else 1
     return 0
 
 
@@ -326,4 +496,14 @@ def register(subparsers) -> None:
     # Phase 2: Grammar-constrained planning knobs
     sp_plan.add_argument("--llm", action="store_true", help="Use LLM (Coder V2) planner instead of heuristics")
     sp_plan.add_argument("--json-grammar", dest="json_grammar", action="store_true", help="Force JSON-mode decoding for LLM planner (strict)")
+    sp_plan.add_argument(
+        "--force-apply",
+        action="store_true",
+        help="Override apply policy gating (manual operator approval)",
+    )
+    sp_plan.add_argument(
+        "--force-governor",
+        action="store_true",
+        help="Bypass governor scheduling / rate limits for this apply",
+    )
     sp_plan.set_defaults(func=cmd_plan)

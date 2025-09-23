@@ -324,7 +324,7 @@ def persist_analysis(analysis: Dict[str, Any], outdir: str | Path = "out/analysi
     from datetime import datetime
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     path = outdir / f"analysis_{ts}.json"
     try:
         path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8")

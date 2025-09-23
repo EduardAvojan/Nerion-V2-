@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import hashlib
 import json
 import os
@@ -125,3 +125,34 @@ def load_plan_cache(path: Path) -> Dict[str, Any]:
 def save_plan_cache(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def attach_brief_metadata(plan: Dict[str, Any], brief_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Embed architect brief context into a plan's metadata."""
+
+    if not brief_context:
+        return plan
+
+    meta = dict(plan.get("metadata") or {})
+    brief = brief_context.get("brief") if isinstance(brief_context, dict) else None
+    if not isinstance(brief, dict):
+        brief = {}
+
+    meta["architect_brief"] = {
+        "id": brief.get("id"),
+        "component": brief.get("component"),
+        "title": brief.get("title"),
+        "decision": brief_context.get("decision"),
+        "policy": brief_context.get("policy"),
+        "risk_score": brief_context.get("risk_score"),
+        "effort_score": brief_context.get("effort_score"),
+        "estimated_cost": brief_context.get("estimated_cost"),
+        "effective_priority": brief_context.get("effective_priority"),
+        "reasons": list(brief_context.get("reasons") or []),
+        "summary": brief.get("summary"),
+        "suggested_targets": list(brief_context.get("suggested_targets") or []),
+        "alternates": list(brief_context.get("alternates") or []),
+        "gating": dict(brief_context.get("gating") or {}),
+    }
+    plan["metadata"] = meta
+    return plan

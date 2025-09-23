@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from ops.telemetry import load_operator_snapshot
+
 
 def _load_jsonl_tail(path: Path, n: int) -> List[Dict[str, Any]]:
     if not path.exists():
@@ -182,6 +184,11 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         rep['per_intent'] = {}
         rep['experiments'] = {}
 
+    try:
+        rep['telemetry'] = load_operator_snapshot()
+    except Exception:
+        rep['telemetry'] = None
+
     if getattr(args, 'json', False):
         print(json.dumps(rep, indent=2))
     else:
@@ -191,6 +198,62 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         print(f"  learning: ESS={rep.get('ess_total')} realized_epsilon={rep.get('realized_epsilon')} drift_KL={rep.get('intent_drift_kl')}")
         cov = rep['coverage']
         print(f"  coverage: current={cov['current_pct']}% delta={cov['delta_vs_baseline']}")
+        telemetry = rep.get('telemetry') or {}
+        knowledge = telemetry.get('knowledge_graph') if isinstance(telemetry, dict) else None
+        hotspots = []
+        if isinstance(knowledge, dict):
+            hotspots = knowledge.get('hotspots') or []
+        if hotspots:
+            top = hotspots[0]
+            component = top.get('component') or 'unknown'
+            risk = top.get('risk_score')
+            if isinstance(risk, (int, float)):
+                print(f"  hotspot: {component} (risk {risk:.1f})")
+            else:
+                print(f"  hotspot: {component}")
+        tele = rep.get('telemetry') or {}
+        window = (tele.get('window') or {})
+        ratio = tele.get('prompt_completion_ratio') or {}
+        print(
+            "  telemetry: "
+            + (
+                f"{tele.get('counts_total', 0)} events/{window.get('hours', 0)}h prompts={ratio.get('prompts', 0)} completions={ratio.get('completions', 0)}"
+                if tele
+                else "no samples"
+            )
+        )
+        providers = tele.get('providers') if tele else None
+        if providers:
+            top = providers[0]
+            latency = top.get('avg_latency_ms')
+            latency_str = f"{int(latency)}ms" if isinstance(latency, (int, float)) else '—'
+            cost = top.get('cost_usd')
+            cost_str = f"${cost:.4f}" if isinstance(cost, (int, float)) else '—'
+            err = top.get('error_rate')
+            err_str = f"{err:.3f}" if isinstance(err, (int, float)) else '—'
+            print(f"    top provider: {top.get('provider')} latency={latency_str} cost={cost_str} error_rate={err_str}")
+        apply = tele.get('apply_metrics') if tele else None
+        if apply and isinstance(apply, dict) and apply.get('total'):
+            rate = apply.get('rate')
+            rate_str = f"{rate * 100:.1f}%" if isinstance(rate, (int, float)) else '—'
+            print(
+                "    apply window: "
+                + f"success {apply.get('success', 0)}/{apply.get('total', 0)} (rate {rate_str}), "
+                + f"rolled_back {apply.get('rolled_back', 0)}"
+            )
+        policy_gates = tele.get('policy_gates') if tele else None
+        if isinstance(policy_gates, dict) and policy_gates:
+            summary = ', '.join(f"{k}:{v}" for k, v in sorted(policy_gates.items()))
+            print(f"    policy gates: {summary}")
+        governor_counts = tele.get('governor_decisions') if tele else None
+        if isinstance(governor_counts, dict) and governor_counts:
+            summary = ', '.join(f"{k}:{v}" for k, v in sorted(governor_counts.items()))
+            print(f"    governor decisions: {summary}")
+        latest = (tele.get('latest_reflection') or {}) if tele else {}
+        anomalies = latest.get('anomalies') or []
+        if anomalies:
+            detail = anomalies[0].get('detail') or anomalies[0].get('kind')
+            print(f"    anomalies: {len(anomalies)} (e.g. {detail})")
         # Table for top tools (if available)
         tops = rep.get('top_tools') or []
         if tops:

@@ -54,7 +54,7 @@ def _handle_fine_tune(args: argparse.Namespace) -> int:
     (out_root / 'dataset.jsonl').write_text('\n'.join(_json.dumps(r, ensure_ascii=False) for r in ds), encoding='utf-8')
     # Training stub
     train_cfg = {
-        "provider": os.getenv('NERION_V2_CODE_PROVIDER', 'openai:o4-mini'),
+        "provider": os.getenv('NERION_V2_CODE_PROVIDER', 'openai:gpt-5'),
         "method": "LoRA",
         "epochs": 1,
         "per_intent_tags": True,

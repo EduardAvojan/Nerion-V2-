@@ -1,30 +1,23 @@
 # Nerion V2 (API-first) provider catalog. Legacy offline sections lifted into Nerion Classic.
 api_providers:
   defaults:
-    chat: openai:o4-mini
-    code: openai:o4-mini
-    planner: anthropic:claude-3-5-sonnet
+    chat: openai:gpt-5
+    code: openai:gpt-5
+    planner: google:gemini-2.5-pro
     embeddings: openai:text-embedding-3-large
   providers:
     openai:
       endpoint: https://api.openai.com/v1
       key_env: NERION_V2_OPENAI_KEY
       models:
-        o4-mini:
+        gpt-5:
           roles: [chat, code]
-          max_output_tokens: 16000
+          max_output_tokens: 30000
           supports_tools: true
+          supports_structured_output: true
         text-embedding-3-large:
           roles: [embeddings]
           dimensionality: 3072
-    anthropic:
-      endpoint: https://api.anthropic.com/v1
-      key_env: NERION_V2_ANTHROPIC_KEY
-      models:
-        claude-3-5-sonnet:
-          roles: [planner, chat]
-          max_output_tokens: 8000
-          supports_structured_output: true
     google:
       endpoint: https://generativelanguage.googleapis.com/v1beta
       key_env: NERION_V2_GEMINI_KEY

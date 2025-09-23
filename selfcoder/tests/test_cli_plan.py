@@ -35,11 +35,30 @@ def test_plan_apply_writes_docstring(tmp_path, capsys):
         "-i", "add module docstring 'Applied from planner'",
         "-f", str(target),
         "--apply",
+        "--force-apply",
     ])
     assert rc == 0
 
     new_src = target.read_text(encoding="utf-8")
     assert '"""Applied from planner"""' in new_src or "'''Applied from planner'''" in new_src
+
+
+def test_plan_apply_respects_policy_gate(tmp_path, monkeypatch):
+    target = tmp_path / "module_under_test.py"
+    target.write_text("print('hi')\n", encoding="utf-8")
+
+    import selfcoder.cli as cli_module
+    monkeypatch.setattr(cli_module, "build_planner_context", lambda *a, **k: None, raising=False)
+
+    rc = main([
+        "plan",
+        "-i", "add module docstring",
+        "-f", str(target),
+        "--apply",
+    ])
+    # With no architect metadata the policy should require manual review.
+    assert rc == 2
+    assert "docstring" not in target.read_text(encoding="utf-8")
 
 
 def test_plan_includes_coordination_fields(tmp_path):
@@ -87,3 +106,33 @@ def test_plan_edits_from_nl_sets_clarify_required_flag(tmp_path):
     plan = plan_edits_from_nl("", file=str(tmp_path / "dummy.py"))
     if "clarify" in plan:
         assert plan.get("metadata", {}).get("clarify_required") is True
+
+
+def test_plan_edits_uses_brief_context_for_target(tmp_path):
+    from selfcoder.planner.planner import plan_edits_from_nl
+
+    brief_context = {
+        "brief": {
+            "id": "brief-test",
+            "component": "core",
+            "title": "Stabilise core",
+            "summary": "Fix telemetry hotspots",
+        },
+        "decision": "auto",
+        "policy": "balanced",
+        "risk_score": 3.5,
+        "effort_score": 1.2,
+        "estimated_cost": 120.0,
+        "effective_priority": 7.5,
+        "reasons": ["Risk score exceeds review threshold"],
+        "suggested_targets": ["core/example.py"],
+        "alternates": [],
+        "gating": {"risk": {"score": 3.5}},
+    }
+
+    plan = plan_edits_from_nl("add function foo", brief_context=brief_context)
+    assert plan.get("target_file") == "core/example.py"
+    meta = plan.get("metadata", {}).get("architect_brief")
+    assert meta is not None
+    assert meta["id"] == "brief-test"
+    assert "core/example.py" in meta.get("suggested_targets", [])

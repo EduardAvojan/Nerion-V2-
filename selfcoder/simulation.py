@@ -1,10 +1,13 @@
 from __future__ import annotations
+import os
+import shlex
 import tempfile
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Dict, List, Tuple
 
 from selfcoder.diagnostics import analyze_exception, persist_analysis
 
@@ -26,6 +29,168 @@ DEFAULT_IGNORES = {
 
 # Cap diff text to avoid dumping huge outputs when many files differ
 MAX_DIFF_CHARS = 20000
+
+# Optional simulation checks (beyond pytest/healthcheck)
+_OPTIONAL_CHECK_SPECS: Tuple[Tuple[str, str], ...] = (
+    ("lint", "NERION_SIM_LINT_CMD"),
+    ("typecheck", "NERION_SIM_TYPE_CMD"),
+    ("ui_build", "NERION_SIM_UI_CMD"),
+    ("regression", "NERION_SIM_REG_CMD"),
+)
+
+_OPTIONAL_TIMEOUT_DEFAULTS: Dict[str, int] = {
+    "lint": 180,
+    "typecheck": 240,
+    "ui_build": 420,
+    "regression": 300,
+}
+
+_SKIP_TOKENS = {"0", "false", "off", "skip", "none", "no"}
+
+
+def _now() -> float:
+    return time.monotonic()
+
+
+def _skip_result(name: str, reason: str, *, stdout: str = "") -> Dict[str, Union[None, str, bool, float]]:
+    return {
+        "name": name,
+        "command": None,
+        "rc": None,
+        "stdout": stdout,
+        "stderr": "",
+        "skipped": True,
+        "reason": reason,
+        "duration": 0.0,
+        "ok": True,
+        "origin": None,
+    }
+
+
+def _default_command_for(name: str, root: Path) -> Optional[List[str]]:
+    # Defaults are intentionally off; enable via NERION_SIM_*_CMD.
+    return None
+
+
+def _resolve_command(name: str, env_var: str, root: Path) -> Tuple[Optional[List[str]], Optional[str], Optional[str]]:
+    raw = os.getenv(env_var)
+    if raw:
+        token = raw.strip()
+        if token.lower() in _SKIP_TOKENS:
+            return None, f"disabled via {env_var}", f"env:{env_var}"
+        return shlex.split(token), None, f"env:{env_var}"
+    default_cmd = _default_command_for(name, root)
+    if not default_cmd:
+        return None, "no default command configured", None
+    if shutil.which(default_cmd[0]) is None:
+        return None, f"command '{default_cmd[0]}' not available", None
+    return default_cmd, None, "default"
+
+
+def _resolve_timeout(name: str, env_var: str, default: Optional[int]) -> Optional[int]:
+    raw = os.getenv(env_var)
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            return default
+    return default
+
+
+def _run_named_check(
+    name: str,
+    command: List[str],
+    *,
+    cwd: Path,
+    timeout: Optional[int] = None,
+) -> Dict[str, Union[int, str, bool, float, List[str]]]:
+    start = _now()
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        duration = round(_now() - start, 3)
+        return {
+            "name": name,
+            "command": command,
+            "rc": proc.returncode,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+            "skipped": False,
+            "reason": None,
+            "duration": duration,
+            "ok": proc.returncode == 0,
+            "origin": None,
+        }
+    except subprocess.TimeoutExpired as exc:
+        analysis = analyze_exception(exc)
+        persist_analysis(analysis)
+        duration = round(_now() - start, 3)
+        return {
+            "name": name,
+            "command": command,
+            "rc": 124,
+            "stdout": f"[simulate] {name} timed out after {timeout} seconds\n",
+            "stderr": exc.stderr or "",
+            "analysis": analysis,
+            "skipped": False,
+            "reason": "timeout",
+            "duration": duration,
+            "ok": False,
+            "origin": None,
+        }
+    except PermissionError as exc:
+        analysis = analyze_exception(exc)
+        if isinstance(analysis, dict):
+            analysis["root_cause"] = "TimeoutExpired"
+        persist_analysis(analysis)
+        duration = round(_now() - start, 3)
+        return {
+            "name": name,
+            "command": command,
+            "rc": 124,
+            "stdout": f"[simulate] {name} timeout/kill not permitted\n",
+            "stderr": "",
+            "analysis": analysis,
+            "skipped": False,
+            "reason": "timeout",
+            "duration": duration,
+            "ok": False,
+            "origin": None,
+        }
+    except FileNotFoundError as exc:
+        duration = round(_now() - start, 3)
+        return {
+            "name": name,
+            "command": command,
+            "rc": None,
+            "stdout": "",
+            "stderr": str(exc),
+            "skipped": True,
+            "reason": f"command not found: {command[0]}",
+            "duration": duration,
+            "ok": True,
+            "origin": None,
+        }
+    except Exception as exc:
+        duration = round(_now() - start, 3)
+        return {
+            "name": name,
+            "command": command,
+            "rc": 1,
+            "stdout": "",
+            "stderr": str(exc),
+            "skipped": False,
+            "reason": "exception",
+            "duration": duration,
+            "ok": False,
+            "origin": None,
+        }
 
 def _rewrite_paths_for_shadow(argv: list[Union[str, list]], real_root: Path, shadow_root: Path) -> list[str]:
     """
@@ -98,112 +263,54 @@ def run_tests_and_healthcheck(
     pytest_timeout: Optional[int] = None,
     healthcheck_timeout: Optional[int] = None,
 ) -> dict:
-    """Runs pytest and healthchecks in the shadow directory and returns the results.
-    Allows skipping and timeout control."""
+    """Run required + optional simulation checks inside the shadow workspace."""
+
+    results: Dict[str, Dict[str, Union[str, int, bool, float, List[str]]]] = {}
     py_executable = sys.executable
 
-    # Pytest result
+    # pytest --------------------------------------------------------------
     if skip_pytest:
-        tests = {
-            "rc": 0,
-            "stdout": "[simulate] pytest skipped by --skip-pytest\n",
-            "stderr": "",
-        }
+        tests = _skip_result("pytest", "skipped via --skip-pytest", stdout="[simulate] pytest skipped by --skip-pytest\n")
     else:
         tests_dir = shadow_root / "selfcoder" / "tests"
         has_tests = tests_dir.exists() and any(tests_dir.rglob("test_*.py"))
         if not has_tests:
-            tests = {
-                "rc": 0,
-                "stdout": "[simulate] no tests found, skipping\n",
-                "stderr": "",
-            }
+            tests = _skip_result("pytest", "no tests discovered", stdout="[simulate] no tests found, skipping\n")
         else:
             test_cmd = [py_executable, "-m", "pytest", "-q", "selfcoder/tests"]
-            try:
-                p = subprocess.run(
-                    test_cmd,
-                    cwd=shadow_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=pytest_timeout,
-                    check=False
-                )
-                tests = {
-                    "rc": p.returncode,
-                    "stdout": p.stdout,
-                    "stderr": p.stderr,
-                }
-            except subprocess.TimeoutExpired as e:
-                analysis = analyze_exception(e)
-                persist_analysis(analysis)
-                tests = {
-                    "rc": 124,
-                    "stdout": "[simulate] pytest timed out after {} seconds\n".format(pytest_timeout),
-                    "stderr": "",
-                    "analysis": analysis,
-                }
-            except PermissionError as e:
-                # Some environments deny kill() on timeout; treat as TimeoutExpired equivalent
-                analysis = analyze_exception(e)
-                if isinstance(analysis, dict):
-                    analysis["root_cause"] = "TimeoutExpired"
-                persist_analysis(analysis)
-                tests = {
-                    "rc": 124,
-                    "stdout": "[simulate] pytest timeout/kill not permitted\n",
-                    "stderr": "",
-                    "analysis": analysis,
-                }
+            tests = _run_named_check("pytest", test_cmd, cwd=shadow_root, timeout=pytest_timeout)
+            tests.setdefault("origin", "default")
+    tests["timeout"] = pytest_timeout
+    results["pytest"] = tests
 
-    # Healthcheck result
+    # healthcheck ---------------------------------------------------------
     if skip_healthcheck:
-        hc = {
-            "rc": 0,
-            "stdout": "[simulate] healthcheck skipped by --skip-healthcheck\n",
-            "stderr": "",
-        }
+        hc = _skip_result("healthcheck", "skipped via --skip-healthcheck", stdout="[simulate] healthcheck skipped by --skip-healthcheck\n")
     else:
         hc_cmd = [py_executable, "-m", "selfcoder.cli", "healthcheck"]
-        try:
-            p = subprocess.run(
-                hc_cmd,
-                cwd=shadow_root,
-                capture_output=True,
-                text=True,
-                timeout=healthcheck_timeout,
-                check=False
-            )
-            hc = {
-                "rc": p.returncode,
-                "stdout": p.stdout,
-                "stderr": p.stderr,
-            }
-        except subprocess.TimeoutExpired as e:
-            analysis = analyze_exception(e)
-            persist_analysis(analysis)
-            hc = {
-                "rc": 124,
-                "stdout": "[simulate] healthcheck timed out after {} seconds\n".format(healthcheck_timeout),
-                "stderr": "",
-                "analysis": analysis,
-            }
-        except PermissionError as e:
-            analysis = analyze_exception(e)
-            if isinstance(analysis, dict):
-                analysis["root_cause"] = "TimeoutExpired"
-            persist_analysis(analysis)
-            hc = {
-                "rc": 124,
-                "stdout": "[simulate] healthcheck timeout/kill not permitted\n",
-                "stderr": "",
-                "analysis": analysis,
-            }
+        hc = _run_named_check("healthcheck", hc_cmd, cwd=shadow_root, timeout=healthcheck_timeout)
+        hc.setdefault("origin", "default")
+    hc["timeout"] = healthcheck_timeout
+    results["healthcheck"] = hc
 
-    return {
-        "pytest": tests,
-        "healthcheck": hc,
-    }
+    # optional checks -----------------------------------------------------
+    for name, env_var in _OPTIONAL_CHECK_SPECS:
+        cmd, skip_reason, origin = _resolve_command(name, env_var, shadow_root)
+        timeout_env = f"{env_var}_TIMEOUT"
+        timeout_default = _OPTIONAL_TIMEOUT_DEFAULTS.get(name)
+        timeout = _resolve_timeout(name, timeout_env, timeout_default)
+        if not cmd:
+            entry = _skip_result(name, skip_reason or "disabled")
+            entry["origin"] = origin
+            entry["timeout"] = timeout
+            results[name] = entry
+            continue
+        entry = _run_named_check(name, cmd, cwd=shadow_root, timeout=timeout)
+        entry["origin"] = origin or "default"
+        entry["timeout"] = timeout
+        results[name] = entry
+
+    return results
 
 def compute_diff(old_root: Path, new_root: Path) -> dict:
     """Computes the difference between two directories.

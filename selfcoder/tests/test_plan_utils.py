@@ -48,3 +48,55 @@ def test_llm_strict_raises_when_unavailable():
     with pytest.raises(RuntimeError):
         plan_with_llm("add docstring", None)
     os.environ.pop("NERION_LLM_STRICT", None)
+
+
+def test_plan_with_llm_includes_brief_context(monkeypatch):
+    from selfcoder.planner import llm_planner
+
+    captured = {}
+
+    class DummyCoder:
+        def __init__(self, role: str | None = None):
+            captured["role"] = role
+
+        def complete_json(self, prompt: str, system: str) -> str:
+            captured["prompt"] = prompt
+            return json.dumps(
+                {
+                    "actions": [
+                        {"kind": "create_file", "payload": {"path": "core/example.py"}}
+                    ],
+                    "target_file": "core/example.py",
+                }
+            )
+
+    monkeypatch.setattr(llm_planner, "Coder", DummyCoder)
+
+    context = {
+        "brief": {
+            "id": "brief-llm",
+            "component": "core",
+            "title": "Core upgrade",
+            "summary": "Improve reliability",
+            "rationale": ["Risk rising"],
+            "acceptance_criteria": ["Telemetry quiet"],
+        },
+        "decision": "review",
+        "policy": "safe",
+        "risk_score": 9.0,
+        "effort_score": 2.5,
+        "estimated_cost": 400.0,
+        "effective_priority": 12.0,
+        "reasons": ["Risk score 9.0 exceeds review threshold"],
+        "suggested_targets": ["core/example.py"],
+        "alternates": [],
+        "gating": {"risk": {"score": 9.0}},
+    }
+
+    plan = llm_planner.plan_with_llm("add function foo", None, brief_context=context)
+
+    assert "Architect brief context" in captured.get("prompt", "")
+    assert "core" in captured.get("prompt", "")
+    meta = plan.get("metadata", {}).get("architect_brief")
+    assert meta and meta["id"] == "brief-llm"
+    assert plan.get("target_file") == "core/example.py"

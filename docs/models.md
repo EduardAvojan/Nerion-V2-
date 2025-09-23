@@ -13,15 +13,15 @@ Example:
 ```yaml
 api_providers:
   defaults:
-    chat: openai:o4-mini
+    chat: openai:gpt-5
   providers:
     openai:
       endpoint: https://api.openai.com/v1
       key_env: NERION_V2_OPENAI_KEY
       models:
-        o4-mini:
+        gpt-5:
           roles: [chat, code]
-          max_output_tokens: 16000
+          max_output_tokens: 30000
     google:
       endpoint: https://generativelanguage.googleapis.com/v1beta
       key_env: NERION_V2_GEMINI_KEY
@@ -46,7 +46,7 @@ api_providers:
   - `NERION_V2_EMBEDDINGS_PROVIDER`
   - `NERION_V2_REQUEST_TIMEOUT`
 
-Providers are expressed as `provider:model` identifiers (for example `openai:o4-mini`).
+Providers are expressed as `provider:model` identifiers (for example `openai:gpt-5`).
 
 Older offline backends (Ollama, llama.cpp, vLLM, exllamav2) are no longer part of the V2 stack. If you need the
 previous local-first experience, use the classic Nerion repository instead.

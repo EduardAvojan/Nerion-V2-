@@ -8,6 +8,7 @@ expected write volume is low and bounded by memory operations.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from collections import deque
 from datetime import datetime, timezone
@@ -16,6 +17,21 @@ from threading import RLock
 from typing import Any, Dict, Iterable, List, Optional
 
 from ops.security.fs_guard import ensure_in_repo_auto
+
+try:  # Runtime optional: telemetry bus can fail without blocking journaling
+    from ops.telemetry import TelemetryEvent, ensure_default_sinks, publish as _publish_event
+
+    ensure_default_sinks()
+except Exception:  # pragma: no cover - telemetry is optional
+    TelemetryEvent = None  # type: ignore
+
+    def ensure_default_sinks(*_a, **_kw):  # type: ignore
+        return None
+
+    def _publish_event(*_a, **_kw):  # type: ignore
+        return None
+
+TELEMETRY_SOURCE = "core.memory.journal_store"
 
 _JOURNAL_PATH = ensure_in_repo_auto(Path("out/memory/memory_journal.jsonl"))
 _JOURNAL_LOCK = RLock()
@@ -72,6 +88,8 @@ def log_event(kind: str, rationale: str = "", **fields: Any) -> Dict[str, Any]:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(payload)
             handle.write("\n")
+
+    _publish_to_telemetry(event)
     return event
 
 
@@ -148,3 +166,66 @@ try:
     migrate_legacy_jsonl()
 except Exception:
     pass
+
+
+def _publish_to_telemetry(event: Dict[str, Any]) -> None:
+    if TelemetryEvent is None:
+        return
+
+    kind = event.get("kind", "other")
+    rationale = str(event.get("rationale", ""))
+    subject = _infer_subject(event)
+    metadata, payload = _partition_fields(event, exclude_keys={"payload", "metadata"})
+    metadata.setdefault("rationale", rationale)
+
+    telemetry_event = TelemetryEvent(
+        kind=kind if isinstance(kind, str) else str(kind),
+        source=TELEMETRY_SOURCE,
+        subject=subject,
+        metadata=metadata,
+        payload=payload or None,
+        tags=["journal"],
+    )
+
+    redact_keys = []
+    if not _bool_env("NERION_V2_LOG_PROMPTS", False):
+        redact_keys.extend(["prompt", "completion", "diff"])
+
+    try:
+        _publish_event(telemetry_event, redact_keys=redact_keys or None, extra_tags=None, auto_flush=True)
+    except Exception:  # pragma: no cover - bus failures must not break journaling
+        pass
+
+
+def _infer_subject(event: Dict[str, Any]) -> Optional[str]:
+    for key in ("subject", "plan_path", "snapshot_id", "file", "path", "task", "interaction_id"):
+        if key in event and event[key] is not None:
+            try:
+                return str(event[key])
+            except Exception:
+                return None
+    return None
+
+
+def _partition_fields(event: Dict[str, Any], exclude_keys: set[str]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    metadata: Dict[str, Any] = {}
+    payload: Dict[str, Any] = {}
+    for key, value in event.items():
+        if key in {"id", "timestamp", "kind"} | exclude_keys:
+            continue
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            metadata[key] = value
+        else:
+            try:
+                json.dumps(value, ensure_ascii=False)
+                payload[key] = value
+            except TypeError:
+                payload[key] = str(value)
+    return metadata, payload
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}

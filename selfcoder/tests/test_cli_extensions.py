@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import selfcoder.cli_ext.main as sc_main
+
 
 def _build_parser():
     import selfcoder.cli as cli
@@ -78,6 +80,94 @@ def test_health_dashboard_cli(tmp_path, capsys):
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert "experience" in data and "stt" in data and "coverage" in data
+    assert "telemetry" in data
+    assert isinstance(data.get("telemetry"), dict)
+
+
+def test_telemetry_schedule_cli(capsys):
+    parser = _build_parser()
+    ns = parser.parse_args(["telemetry", "schedule", "--at", "now"])
+    rc = ns.func(ns)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "telemetry reflect" in out
+    assert "telemetry knowledge" in out
+
+
+def test_telemetry_experiments_cli(tmp_path, capsys):
+    reflections_dir = Path("out/telemetry/reflections")
+    reflections_dir.mkdir(parents=True, exist_ok=True)
+    reflection_path = reflections_dir / "reflection_test.json"
+    reflection_payload = {
+        "timestamp": "2025-01-01T00:00:00Z",
+        "event_count": 0,
+        "summary": {},
+        "clusters": [],
+        "anomalies": [],
+        "lessons": [],
+    }
+    reflection_path.write_text(json.dumps(reflection_payload), encoding="utf-8")
+
+    parser = _build_parser()
+    ns = parser.parse_args(
+        [
+            "telemetry",
+            "experiments",
+            "log",
+            "--title",
+            "Latency tuning",
+            "--hypothesis",
+            "Adjust retry improves p95",
+            "--reflection",
+            "latest",
+            "--arms",
+            "baseline,treatment",
+            "--metric",
+            "p95=700",
+        ]
+    )
+    rc = ns.func(ns)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "experiment recorded" in out
+    exp_id = out.strip().split(":")[-1].strip()
+    assert exp_id
+
+    ns = parser.parse_args(["telemetry", "experiments", "update", exp_id, "--status", "completed", "--outcome", "p95 improved"])
+    rc = ns.func(ns)
+    assert rc == 0
+    update_out = capsys.readouterr().out
+    assert "experiment updated" in update_out
+
+    ns = parser.parse_args(["telemetry", "experiments", "list", "--limit", "5"])
+    rc = ns.func(ns)
+    assert rc == 0
+    listing = capsys.readouterr().out
+    data = json.loads(listing)
+    assert isinstance(data, list) and data
+    first = data[0]
+    assert first["id"] == exp_id
+    assert first["status"] == "completed"
+    assert first["outcome"] == "p95 improved"
+
+
+def test_telemetry_knowledge_cli(capsys):
+    parser = _build_parser()
+    ns = parser.parse_args([
+        "telemetry",
+        "knowledge",
+        "--no-git",
+        "--limit-events",
+        "5",
+        "--json",
+    ])
+    rc = ns.func(ns)
+    assert rc == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert isinstance(data.get("nodes"), list)
+    assert isinstance(data.get("edges"), list)
+    assert data.get("stats", {}).get("component_count", 0) >= 1
 
 
 def test_health_html_generation(tmp_path, capsys):
@@ -116,6 +206,57 @@ def test_artifacts_export_cli(tmp_path, capsys):
     # Check headings and citations present
     assert "# Topic:" in out
     assert "## Citations" in out
+
+
+def test_selfcoder_apply_policy_gate(tmp_path, monkeypatch):
+    plan_path = tmp_path / "plan.json"
+    plan = {
+        "actions": [{"kind": "add_module_docstring", "payload": {"doc": "A"}}],
+        "target_file": str(tmp_path / "foo.py"),
+    }
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+    called = {"apply": False}
+
+    def _fake_apply(plan_dict, preview=False, healers=None):
+        called["apply"] = True
+        return []
+
+    monkeypatch.setattr(sc_main, "apply_plan", _fake_apply)
+
+    rc = sc_main.main(["apply", str(plan_path)])
+    assert rc == 2
+    assert called["apply"] is False
+
+    rc = sc_main.main(["apply", str(plan_path), "--force-apply"])
+    assert rc == 0
+    assert called["apply"] is True
+
+
+def test_selfcoder_audit_policy_gate(tmp_path, monkeypatch):
+    target = tmp_path / "bar.py"
+    target.write_text("print('hi')\n", encoding="utf-8")
+    plan = {
+        "actions": [{"kind": "add_module_docstring", "payload": {"doc": "B"}}],
+        "target_file": str(target),
+    }
+
+    monkeypatch.setattr(sc_main, "generate_improvement_plan", lambda root: plan)
+
+    called = {"apply": False}
+
+    def _fake_apply(plan_dict, healers=None):
+        called["apply"] = True
+
+    monkeypatch.setattr(sc_main, "apply_plan", _fake_apply)
+
+    rc = sc_main.main(["audit", "--apply"])
+    assert rc == 2
+    assert called["apply"] is False
+
+    rc = sc_main.main(["audit", "--apply", "--force-apply"])
+    assert rc == 0
+    assert called["apply"] is True
 
 
 def test_reviewer_style_threshold_blocks(tmp_path, monkeypatch):
