@@ -26,3 +26,6 @@ api_providers:
           roles: [chat, code, planner]
           supports_structured_output: true
           multimodal: true
+        text-embedding-004:
+          roles: [embeddings]
+          dimensionality: 768

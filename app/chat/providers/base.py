@@ -312,7 +312,48 @@ class _GoogleAdapter(_ProviderAdapter):
         texts: List[str],
         timeout: float,
     ) -> List[List[float]]:
-        raise ProviderError("Embeddings not supported for Google provider yet")
+        self.ensure_ready(model)
+        inputs = [str(text) for text in texts if text is not None]
+        if not inputs:
+            return []
+        url = f"{self.endpoint}/models/{model}:batchEmbedContents"
+        payload: Dict[str, Any] = {
+            "requests": [
+                {"content": {"parts": [{"text": text}]}}
+                for text in inputs
+            ]
+        }
+        started = time.perf_counter()
+        try:
+            response = requests.post(
+                url,
+                params={"key": self.api_key},
+                json=payload,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:  # pragma: no cover - network failures
+            raise ProviderError(f"Gemini embeddings request failed: {exc}") from exc
+        latency = time.perf_counter() - started
+        if response.status_code >= 400:
+            raise ProviderError(
+                f"Gemini embeddings error {response.status_code}: {response.text.strip()}"
+            )
+        data = response.json()
+        embeddings_raw = data.get("embeddings") or []
+        embeddings: List[List[float]] = []
+        for item in embeddings_raw:
+            values = item.get("values") or []
+            if not isinstance(values, list):
+                raise ProviderError("Gemini embeddings response malformed")
+            try:
+                embeddings.append([float(val) for val in values])
+            except Exception as exc:
+                raise ProviderError("Gemini embedding vector contains non-numeric values") from exc
+        if len(embeddings) != len(inputs):
+            raise ProviderError("Gemini embeddings response count mismatch")
+        # Latency currently unused but captured for parity with generation path.
+        _ = latency
+        return embeddings
 
 
 _ADAPTERS = {

@@ -1,0 +1,12 @@
+{
+  "parameters": {
+    "allow_zero_division": false,
+    "length": 5,
+    "operations": [
+      "add",
+      "multiply",
+      "clamp"
+    ]
+  },
+  "template_id": "alg_arithmetic_pipeline"
+}

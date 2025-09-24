@@ -1,0 +1,8 @@
+{
+  "parameters": {
+    "duplication_count": 3,
+    "io_shape": "dict",
+    "use_classes": false
+  },
+  "template_id": "refactor_duplicate_code"
+}

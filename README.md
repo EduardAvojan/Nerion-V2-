@@ -13,6 +13,44 @@ Designed for modularity and explicit consent, Nerion remains a professional-grad
 
 ---
 
+## Digital Physicist Stack (Phase 3 Achievements)
+
+Nerion now includes a miniature Digital Physicist pipeline that lets the agent build causal models of code, act under uncertainty, and learn from surprise.
+
+- **Sandbox Foundations:** `sandbox_foundations/` preserves the Phase 1 prototypes that introduced the AST scaffold, toy world model, and learning loop.
+- **Agent & World Model:** `nerion_digital_physicist/agent/` houses the semantic feature pipeline, the CodeGraphNN brain, and the curiosity-driven policy.
+- **Environment:** `nerion_digital_physicist/environment/` contains the scope-aware editors, generative actions, and the executable sandbox (`logic_v2.py`).
+- **Generation Toolkit:** `nerion_digital_physicist/generation/` provides templates, samplers, curriculum policies, and the CLI service for reproducible task batches.
+- **Infrastructure:** `nerion_digital_physicist/infrastructure/` tracks manifests, telemetry, and replay memory with durable JSONL stores and logging helpers.
+- **Experiments:** `nerion_digital_physicist/experiments/` exposes the batch harness (`harness.py`), replay trainers, and metrics/analysis utilities.
+
+Reproduce the latest 5×20 pilot and capture its report:
+
+```bash
+python nerion_digital_physicist/experiments/harness.py \
+  --batches 5 \
+  --episodes-per-batch 20 \
+  --task-root nerion_digital_physicist/generation/generated_tasks \
+  --output-root nerion_digital_physicist/experiments/experiment_runs \
+  --replay-epochs 5 \
+  --replay-batch-size 4 \
+  --replay-learning-rate 0.005
+
+python nerion_digital_physicist/experiments/analysis.py \
+  nerion_digital_physicist/experiments/experiment_runs \
+  --output nerion_digital_physicist/experiments/experiment_runs_summary.json
+```
+
+After exporting metrics, reclaim disk space if desired with:
+
+```bash
+rm -rf nerion_digital_physicist/generation/generated_tasks/*
+```
+
+Enable LLM-backed semantic embeddings by setting `NERION_SEMANTIC_PROVIDER` (for example `google:text-embedding-004`, which requires `NERION_V2_GEMINI_KEY`). When unset, the pipeline falls back to deterministic hash vectors for offline/restricted runs.
+
+---
+
 ## Quick Start (V2)
 
 1.  **Install in Editable Mode**
@@ -183,6 +221,16 @@ Nerion now ships a live telemetry backbone so the assistant, operators, and futu
 - **Telemetry snapshot upgrades:** `ops/telemetry/operator.load_operator_snapshot()` aggregates apply success rate, rollback counts, and governor/policy decisions alongside existing prompt/latency stats. Total provider spend for the current window is calculated from provider metrics and exposed to downstream surfaces.
 - **Operator surfaces:** The CLI dashboard (`nerion health dashboard`) prints the new apply/policy/governor summaries, and the HOLO signal highlight capsule inherits the richer metrics payload so velocity and rollback trends are visible at a glance.
 
+## Looking Ahead (Phase 4)
+
+Phase 4 of the Digital Physicist is now in motion—scaling from deterministic refactors to semantic synthesis:
+
+- **Curiosity Enhancements (done):** Epsilon-greedy exploration and visit-aware tie breakers keep the curiosity policy exploring even when predictions converge.
+- **Semantic World Model (in pilot):** Graph nodes now accept provider embeddings (e.g., Gemini `text-embedding-004`) with on-disk caching so the GNN brain gains richer context.
+- **Generative Actions (new):** A provider-routed docstring implementer (`IMPLEMENT_MULTIPLY_DOCSTRING`) produces code via LLM or deterministic fallback, guarded by compile-time linting, behavioural validation, pytest, and replay tagging.
+- **Harness Scheduling (new):** `experiment_runner.py --generative-per-batch N` forces `N` episodes per batch through the generative action so replay telemetry captures both structural and LLM-backed self-edits during fine-tuning.
+- **Exploration Regularizers (new):** Use `--entropy-bonus` to weight high-entropy predictions and `--adaptive-epsilon --epsilon-decay 0.95 --epsilon-step 0.05 --surprise-target 0.3` to let curiosity automatically open/close exploration during long runs.
+
 ### Quick Sanity Checks (Provider Routing)
 
 - Verify the active chat provider:
@@ -232,6 +280,7 @@ Nerion now ships a live telemetry backbone so the assistant, operators, and futu
 -   **Experimentation & Guardrails:** Sequential A/B decisions (mSPRT) with guardrails on error rate, p95 latency, and escalation; surfaced via CLI for operators.
 -   **Safe Self‑Upgrade:** Shadow replays run in the background and record metrics without affecting live traffic; staged rollout knob enables canary → gradual rollout when healthy.
 -   **Observability:** Health dashboard shows effective sample size (ESS), realized exploration rate (ε), and intent distribution drift (KL). Replay/export tools make runs reproducible.
+-   **Generative Action Harness:** Phase 4 experiments now tag each episode with action metadata (structural, mutator, generative) plus provider/fallback details so replay analytics can isolate LLM-backed edits.
 
 Common self‑learning commands:
 

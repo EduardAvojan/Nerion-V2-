@@ -1,0 +1,18 @@
+{
+  "artifacts_path": "/Users/ed/Nerion-V2/phase3_scaling/generated_baselines/alg_arithmetic_pipeline",
+  "checksum": "2e55262769fa576c535502803df5d842fc5807317477d7546132c90912cb928d",
+  "created_at": "2025-09-24T05:15:17+00:00",
+  "parameters": {
+    "allow_zero_division": false,
+    "length": 5,
+    "operations": [
+      "add",
+      "multiply",
+      "clamp"
+    ]
+  },
+  "seed": 0,
+  "status": "generated",
+  "task_id": "11364029aed54b20b20b2b9d4de3503c",
+  "template_id": "alg_arithmetic_pipeline"
+}

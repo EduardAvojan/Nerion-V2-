@@ -1,0 +1,8 @@
+{
+  "parameters": {
+    "bug_type": "missing_last",
+    "data_shape": "list",
+    "size": 6
+  },
+  "template_id": "bug_off_by_one"
+}

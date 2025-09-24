@@ -1,0 +1,12 @@
+{
+  "average_duration": null,
+  "average_surprise": 0.0008353089809561087,
+  "generation_runs": 0,
+  "replay_status_counts": {
+    "failed": 1109,
+    "pending": 1,
+    "solved": 2217
+  },
+  "templates": {},
+  "total_tasks": 0
+}

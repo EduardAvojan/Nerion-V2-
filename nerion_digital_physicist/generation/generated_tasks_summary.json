@@ -1,0 +1,14 @@
+{
+  "average_duration": 0.06963655564080302,
+  "average_surprise": null,
+  "generation_runs": 3,
+  "replay_status_counts": {
+    "pending": 330
+  },
+  "templates": {
+    "alg_arithmetic_pipeline": 90,
+    "bug_off_by_one": 111,
+    "refactor_duplicate_code": 129
+  },
+  "total_tasks": 330
+}
