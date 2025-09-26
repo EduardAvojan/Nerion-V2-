@@ -35,11 +35,7 @@ class CodeGraphNN(torch.nn.Module):
 
         x = self.conv4(x, edge_index).relu()
 
-        # Aggregate node info to a graph-level vector
-        x = global_mean_pool(x, batch)
-
-        # Heavier dropout before the final classification
-        x = F.dropout(x, p=0.5, training=self.training)
+        # The final linear layer is applied to each node individually.
         x = self.linear(x)
 
         return x

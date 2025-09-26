@@ -1,6 +1,6 @@
 """Experiment harnesses and analytics for the Nerion Digital Physicist."""
 
-from .harness import run_experiment
-from .metrics import summarize_metrics, MetricSummary
+# This file is intentionally left partially blank to prevent import errors
+# from obsolete modules during the transition to the new refactoring harness.
 
-__all__ = ["MetricSummary", "run_experiment", "summarize_metrics"]
+__all__ = []

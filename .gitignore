@@ -104,3 +104,6 @@ tmp/*.json
  
 # Internal review temp files
 .nerion/review_tmp/
+
+.gemini/
+gha-creds-*.json

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import random
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 import torch
 import torch.nn.functional as F
@@ -14,7 +14,7 @@ from torch_geometric.data import Data
 from .brain import CodeGraphNN
 from .data import create_graph_data_object
 from .semantics import SemanticEmbedder, get_global_embedder
-from ..environment.core import Action, EnvironmentV2
+from ..environment.refactor_env import RenameAction, TestOutcome
 
 
 def _ensure_batch(graph: Data) -> Data:
@@ -63,6 +63,8 @@ class AgentV2:
     def __init__(
         self,
         learning_rate: float = 0.01,
+        input_dim: Optional[int] = None,
+        hidden_dim: int = 64,
         *,
         epsilon: float = 0.1,
         epsilon_min: float = 0.0,
@@ -74,23 +76,17 @@ class AgentV2:
         entropy_bonus: float = 0.0,
         embedder: Optional[SemanticEmbedder] = None,
     ):
-        self._logic_path = (
-            Path(__file__).resolve().parent.parent / "environment" / "logic_v2.py"
-        )
-        self.embedder = embedder or get_global_embedder()
-        self.env = EnvironmentV2(embedder=self.embedder)
-        base_graph = _ensure_batch(
-            create_graph_data_object(self._logic_path, embedder=self.embedder)
-        )
+        if input_dim is None:
+            raise ValueError("AgentV2 requires a specific `input_dim`.")
 
-        feature_dim = base_graph.x.shape[1]
         self.brain = CodeGraphNN(
-            num_node_features=feature_dim,
-            hidden_channels=64,
-            num_classes=2,
+            num_node_features=input_dim,
+            hidden_channels=hidden_dim,
+            num_classes=1,  # Output a single continuous value (the predicted success score)
         )
         self.optimizer = torch.optim.Adam(self.brain.parameters(), lr=learning_rate)
-        self.criterion = torch.nn.CrossEntropyLoss()
+        # Use Mean Squared Error for regressing towards a success score
+        self.criterion = torch.nn.MSELoss()
         self.memory: list[tuple[Data, torch.Tensor]] = []
         self.epsilon = max(0.0, float(epsilon))
         self.epsilon_min = max(0.0, float(epsilon_min))
@@ -103,218 +99,67 @@ class AgentV2:
         self.adaptive_surprise_target = max(0.0, float(adaptive_surprise_target))
         self.adaptive_epsilon = bool(adaptive_epsilon)
         self.entropy_bonus = float(entropy_bonus)
-        self._action_visit_counts: dict[Action, int] = {action: 0 for action in Action}
         self._checkpoint_metadata: dict[str, Any] = {}
 
-    def _perceive(self) -> Data:
-        """Observe the current environment state as a graph."""
-        return _ensure_batch(
-            create_graph_data_object(self._logic_path, embedder=self.embedder)
-        )
+    def learn(
+        self, 
+        experiences: List[Tuple[RenameAction, TestOutcome]], 
+        graph_data: Data, 
+        node_map: Dict[int, Dict]
+    ) -> float:
+        """Trains the brain on a batch of experiences from the refactoring environment."""
+        self.brain.train()
+        total_loss = 0
+
+        self.optimizer.zero_grad()
+
+        for action, outcome in experiences:
+            target_node_idx = self._find_node_index(action, node_map)
+            if target_node_idx is None:
+                print(f"Warning: Could not find node for action {action}. Skipping experience.")
+                continue
+
+            action_feature = torch.zeros(graph_data.num_nodes, 1)
+            action_feature[target_node_idx] = 1.0
+            augmented_x = torch.cat([graph_data.x, action_feature], dim=1)
+
+            prediction_logits = self.brain(augmented_x, graph_data.edge_index, graph_data.batch)
+            logit_for_action = prediction_logits[target_node_idx]
+
+            # Calculate a continuous success score (0.0 to 1.0)
+            total_tests = outcome.passed + outcome.failed + outcome.errored
+            if total_tests == 0:
+                success_score = 0.0 # Or 1.0, depending on desired behavior for no tests
+            else:
+                success_score = outcome.passed / total_tests
+            
+            target = torch.tensor([success_score])
+            loss = self.criterion(logit_for_action, target)
+            total_loss += loss.item()
+
+            loss.backward()
+
+        self.optimizer.step()
+
+        return total_loss / len(experiences)
+
+    def _find_node_index(self, action: RenameAction, node_map: Dict[int, Dict]) -> Optional[int]:
+        """Helper to find the graph node index corresponding to a rename action."""
+        for idx, node_info in node_map.items():
+            # The node_id in the map is structured like 'path/to/file.py::ClassName::method_name'
+            node_id_parts = node_info.get("id", "").split("::")
+            file_path = node_id_parts[0]
+            
+            # Match file path and the name of the function/class being renamed
+            if file_path == action.file_path and node_info.get("name") == action.old_name:
+                return idx
+        return None
 
     @property
     def source_path(self) -> Path:
         """Return the path to the environment source file."""
 
         return self._logic_path
-
-    def learn_from_memory(self, epochs: int = 10, *, verbose: bool = True) -> None:
-        """Fine-tune the brain using accumulated experiences."""
-        if not self.memory:
-            return
-
-        if verbose:
-            print(f"🧠 Re-training brain on {len(self.memory)} memories...")
-        self.brain.train()
-        for epoch in range(epochs):
-            total_loss = 0.0
-            random.shuffle(self.memory)
-            for graph_data, label in self.memory:
-                self.optimizer.zero_grad()
-                out = self.brain(graph_data.x, graph_data.edge_index, graph_data.batch)
-                loss = self.criterion(out, label)
-                loss.backward()
-                self.optimizer.step()
-                total_loss += loss.item()
-
-            if verbose and (epoch + 1) % 5 == 0:
-                avg_loss = total_loss / len(self.memory)
-                print(f"   Epoch {epoch + 1:02d}, Avg Loss: {avg_loss:.4f}")
-
-    def _imagine_actions(
-        self, *, verbose: bool = True
-    ) -> Tuple[Dict[Action, torch.Tensor], Dict[Action, Data]]:
-        """Evaluate every action by predicting its post-action test outcome."""
-
-        self.brain.eval()
-        action_predictions: dict[Action, torch.Tensor] = {}
-        hypothetical_graphs: dict[Action, Data] = {}
-
-        for action in list(Action):
-            hypothetical_graph = _ensure_batch(self.env.preview_action_graph(action))
-            hypothetical_graphs[action] = hypothetical_graph
-
-            with torch.no_grad():
-                logits = self.brain(
-                    hypothetical_graph.x,
-                    hypothetical_graph.edge_index,
-                    hypothetical_graph.batch,
-                )
-                probs = F.softmax(logits, dim=1)[0]
-                action_predictions[action] = probs
-                if verbose:
-                    print(
-                        f"  - For {action.name}: Predict Pass={probs[0]:.2f}, Fail={probs[1]:.2f}"
-                    )
-
-        return action_predictions, hypothetical_graphs
-
-    @staticmethod
-    def _entropy(probs: torch.Tensor) -> float:
-        probs = probs.clamp(min=1e-12)
-        entropy = -(probs * probs.log()).sum().item()
-        return float(entropy)
-
-    @staticmethod
-    def _uncertainty(probs: torch.Tensor) -> float:
-        return float(1.0 - abs(probs[0] - probs[1]).item())
-
-    def _select_action(
-        self,
-        action_predictions: Dict[Action, torch.Tensor],
-        *,
-        verbose: bool = True,
-    ) -> PolicyDecision:
-        """Select an action using epsilon-greedy exploration with visit-aware tiebreak."""
-
-        # Exploration: epsilon chance to pick a purely random action.
-        if self.epsilon > 0 and random.random() < self.epsilon:
-            chosen_action = random.choice(list(action_predictions.keys()))
-            entropy = self._entropy(action_predictions[chosen_action])
-            uncertainty = self._uncertainty(action_predictions[chosen_action])
-            if verbose:
-                print(
-                    f"🤖 Agent explores via epsilon-greedy: {chosen_action.name}"
-                    f" (ε={self.epsilon:.2f})"
-                )
-            return PolicyDecision(
-                action=chosen_action,
-                mode="epsilon",
-                epsilon=self.epsilon,
-                uncertainty=uncertainty,
-                entropy=entropy,
-                visit_count=self._action_visit_counts.get(chosen_action, 0),
-            )
-
-        # Curiosity-guided selection with uncertainty metric and visit-aware tie-breaker.
-        best_actions: list[Action] = []
-        best_score = float("-inf")
-        score_cache: Dict[Action, Tuple[float, float, float]] = {}
-        for action, probs in action_predictions.items():
-            uncertainty = self._uncertainty(probs)
-            entropy = self._entropy(probs)
-            score = uncertainty + self.entropy_bonus * entropy
-            score_cache[action] = (score, uncertainty, entropy)
-            if score > best_score + 1e-9:
-                best_score = score
-                best_actions = [action]
-            elif abs(score - best_score) <= 1e-9:
-                best_actions.append(action)
-
-        assert best_actions, "Action list cannot be empty."
-
-        if len(best_actions) > 1:
-            min_visit = min(self._action_visit_counts.get(action, 0) for action in best_actions)
-            best_actions = [action for action in best_actions if self._action_visit_counts.get(action, 0) == min_visit]
-
-        chosen_action = random.choice(best_actions)
-        _, uncertainty, entropy = score_cache[chosen_action]
-        if verbose:
-            print(
-                f"🤖 Agent is most curious about: {chosen_action.name}"
-                f" (Score: {best_score:.2f}, visits={self._action_visit_counts.get(chosen_action, 0)})"
-            )
-        return PolicyDecision(
-            action=chosen_action,
-            mode="curiosity",
-            epsilon=self.epsilon,
-            uncertainty=uncertainty,
-            entropy=entropy,
-            visit_count=self._action_visit_counts.get(chosen_action, 0),
-        )
-
-    def run_episode(
-        self,
-        *,
-        verbose: bool = True,
-        forced_action: Action | None = None,
-    ) -> EpisodeResult:
-        """Execute a single episode and return the outcome summary."""
-
-        if verbose:
-            print("🤔 Imagining outcomes of possible actions...")
-        action_predictions, hypothetical_graphs = self._imagine_actions(verbose=verbose)
-        if forced_action is not None:
-            if forced_action not in action_predictions:
-                raise ValueError(f"Forced action {forced_action!r} not available")
-            forced_probs = action_predictions[forced_action]
-            decision = PolicyDecision(
-                action=forced_action,
-                mode="scheduled",
-                epsilon=self.epsilon,
-                uncertainty=self._uncertainty(forced_probs),
-                entropy=self._entropy(forced_probs),
-                visit_count=self._action_visit_counts.get(forced_action, 0),
-            )
-        else:
-            decision = self._select_action(action_predictions, verbose=verbose)
-        best_action = decision.action
-
-        outcome_is_success = self.env.step(best_action, verbose=verbose)
-        action_metadata = self.env.last_action_metadata()
-        raw_tags = action_metadata.get("action_tags", ())
-        if isinstance(raw_tags, str):
-            action_tags = (raw_tags,)
-        else:
-            action_tags = tuple(str(tag) for tag in raw_tags) if raw_tags else ()
-        predicted = action_predictions[best_action].detach().cpu()
-        predicted_pass = float(predicted[0].item())
-        predicted_fail = float(predicted[1].item())
-        actual_probability = predicted_pass if outcome_is_success else predicted_fail
-        surprise = max(0.0, min(1.0, 1.0 - actual_probability))
-
-        outcome_label = torch.tensor([0 if outcome_is_success else 1], dtype=torch.long)
-        experience_graph = hypothetical_graphs[best_action].clone()
-        experience_graph = _ensure_batch(experience_graph)
-
-        if verbose:
-            print("🤔 Adding new experience to memory...")
-        self.memory.append((experience_graph, outcome_label.clone()))
-
-        # Update visit statistics post-selection
-        self._action_visit_counts[best_action] = self._action_visit_counts.get(best_action, 0) + 1
-
-        self.learn_from_memory(verbose=verbose)
-
-        next_epsilon = self._update_adaptive_parameters(surprise)
-
-        return EpisodeResult(
-            action=best_action,
-            predicted_pass=predicted_pass,
-            predicted_fail=predicted_fail,
-            outcome_is_success=outcome_is_success,
-            surprise=surprise,
-            memory_size=len(self.memory),
-            policy_mode=decision.mode,
-            policy_epsilon=decision.epsilon,
-            policy_uncertainty=decision.uncertainty,
-            policy_entropy=decision.entropy,
-            policy_entropy_bonus=self.entropy_bonus,
-            policy_visit_count=decision.visit_count,
-            policy_epsilon_next=next_epsilon,
-            action_tags=action_tags,
-            action_metadata={k: v for k, v in action_metadata.items()},
-        )
 
     def _update_adaptive_parameters(self, surprise: float) -> float:
         """Optionally adjust epsilon based on surprise observations."""
@@ -330,18 +175,6 @@ class AgentV2:
                 self.epsilon = min(self.epsilon_max, self.epsilon + self.epsilon_step)
 
         return self.epsilon
-
-    def run_life_cycle(self, num_episodes: int = 3) -> None:
-        """Main loop where the agent imagines, selects, acts, and learns."""
-        print("🚀 Starting Agent Life Cycle...")
-
-        for episode in range(num_episodes):
-            print(f"\n--- Episode {episode + 1}/{num_episodes} ---")
-            result = self.run_episode(verbose=True)
-            print(
-                f"Episode result: action={result.action.name}, "
-                f"success={result.outcome_is_success}, surprise={result.surprise:.2f}"
-            )
 
     def save_brain(self, path: Path) -> None:
         """Persist the model (and optimizer) parameters to disk."""
@@ -394,5 +227,6 @@ class AgentV2:
 
 
 if __name__ == "__main__":
-    agent = AgentV2()
-    agent.run_life_cycle()
+    # This main guard is now for simple testing/debugging, 
+    # the main training loop is in experiments/refactor_harness.py
+    print("AgentV2 can be initialized, but requires a harness to run.")
