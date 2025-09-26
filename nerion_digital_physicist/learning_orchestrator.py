@@ -8,35 +8,28 @@ It is responsible for:
 3.  Assessing the impact and viability of those ideas.
 4.  Triggering the curriculum generator for high-quality ideas.
 """
+import os
 import subprocess
 import sys
 import json
-import os
 from typing import Dict, Any, Optional, Tuple
 
 from app.parent.coder import Coder
+from selfcoder.policy.meta_policy_evaluator import MetaPolicyEvaluator
 
 
 class LearningOrchestrator:
     """Manages the autonomous learning cycle for the Digital Physicist."""
 
     def __init__(self):
-        # In the future, this could be loaded from a file or database.
         self._knowledge_base = set()
-        self.strategic_focus_areas = [
-            "Security",
-            "Reliability",
-            "Performance",
-            "Maintainability",
-            "Correctness",
-        ]
+        self.meta_policy_evaluator = MetaPolicyEvaluator()
 
-    def _get_inspiration(self) -> str:
-        """Selects a source of inspiration for generating a new lesson idea."""
-        # For now, we will cycle through the strategic focus areas.
-        # A more advanced implementation could choose based on recent failures or other inputs.
-        focus = self.strategic_focus_areas[0] # Simple starting point
-        print(f"[Inspiration] Selected strategic focus area: {focus}")
+    def _get_inspiration(self) -> Optional[str]:
+        """Selects a source of inspiration based on the meta-policy."""
+        focus = self.meta_policy_evaluator.get_strategic_focus()
+        if focus:
+            print(f"[Inspiration] Meta-Policy selected strategic focus: {focus}")
         return focus
 
     def _generate_idea(self, inspiration: str) -> Optional[Dict[str, Any]]:
@@ -94,6 +87,7 @@ class LearningOrchestrator:
         user_prompt = f"Assess the following lesson concept: {json.dumps(idea)}"
 
         try:
+            os.environ['NERION_V2_REQUEST_TIMEOUT'] = '300'
             response_json_str = llm.complete_json(prompt=user_prompt, system=system_prompt)
             if not response_json_str:
                 return False, "Critic LLM returned an empty response."
@@ -135,7 +129,7 @@ class LearningOrchestrator:
             print("  - Curriculum generator finished successfully.")
             print("\n--- GENERATOR OUTPUT ---")
             print(proc.stdout)
-            print("------------------------\n")
+            print("------------------------")
         except subprocess.CalledProcessError as e:
             print("  - ERROR: Curriculum generator failed.")
             print("\n--- FAILED GENERATOR OUTPUT ---")
@@ -146,8 +140,11 @@ class LearningOrchestrator:
         """Runs one full autonomous learning cycle."""
         print("--- Starting Autonomous Learning Cycle ---")
         
-        # 1. Guided Inspiration
+        # 1. Guided Inspiration from the Meta-Policy
         inspiration = self._get_inspiration()
+        if not inspiration:
+            print("[Orchestrator] No strategic focus provided by Meta-Policy. Halting cycle.")
+            return
         
         # 2. Idea Generation
         idea = self._generate_idea(inspiration)
@@ -155,15 +152,21 @@ class LearningOrchestrator:
             print("[Orchestrator] Failed to generate a new idea. Halting cycle.")
             return
 
-        # 3. Impact Assessment
+        # 3. Impact Assessment (The Critic)
         is_viable, reason = self._assess_impact(idea)
         if not is_viable:
             print(f"[Orchestrator] Discarding idea: {reason}. Halting cycle.")
             return
         print(f"[Orchestrator] {reason}")
 
-        # 4. Trigger the curriculum generation process.
-        # The generator itself will handle the repair loop.
+        # 4. Meta-Policy Veto Check
+        is_approved, reason = self.meta_policy_evaluator.evaluate_idea(idea)
+        if not is_approved:
+            print(f"[Orchestrator] VETOED by Meta-Policy: {reason}. Halting cycle.")
+            return
+        print(f"[Orchestrator] Idea approved by Meta-Policy.")
+
+        # 5. Trigger the curriculum generation process.
         self._trigger_curriculum_generation(idea)
         
         print("--- Autonomous Learning Cycle Complete ---")
