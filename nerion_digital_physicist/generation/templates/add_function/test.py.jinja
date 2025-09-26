@@ -1,0 +1,11 @@
+import pytest
+from module import existing_function, {{ function_name }}
+
+def test_existing_function_still_works():
+    assert existing_function() is True
+
+def test_new_function_exists_and_is_correct():
+    """Asserts that the agent-generated function works as expected."""
+    # The agent needs to generate a function that satisfies this test case.
+    # For this example, we'll test a simple arithmetic function.
+    assert {{ function_name }}(2, 3) == 5
