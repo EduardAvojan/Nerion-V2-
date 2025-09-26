@@ -156,6 +156,13 @@ class SemanticEmbedder:
         return [float(val) for val in vector]
 
     def _persist_cache(self) -> None:
+        MAX_CACHE_ENTRIES = 10000
+        if len(self._cache) > MAX_CACHE_ENTRIES:
+            # Trim the cache, keeping the most recent entries.
+            # This is a simple approach; a more complex LRU cache could be used in the future.
+            keys_to_keep = list(self._cache.keys())[-MAX_CACHE_ENTRIES:]
+            self._cache = {key: self._cache[key] for key in keys_to_keep}
+
         self.cache_path.write_text(
             json.dumps(self._cache, indent=2, sort_keys=True), encoding="utf-8"
         )
