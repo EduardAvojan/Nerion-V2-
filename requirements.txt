@@ -20,7 +20,7 @@ certifi==2025.8.3
     # via requests
 charset-normalizer==3.4.3
     # via requests
-click==8.3.0
+click==8.1.8
     # via
     #   nerion-selfcoder (pyproject.toml)
     #   pip-tools
