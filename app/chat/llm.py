@@ -10,7 +10,6 @@ Keeping these together reduces import churn in the runner/engine.
 """
 from __future__ import annotations
 from typing import List, Optional, Any
-import os
 import re
 
 __all__ = [
@@ -109,11 +108,7 @@ def _strip_think_blocks(resp: str) -> str:
 
 # --------------------------- Provider-backed chain --------------------------
 
-from app.chat.providers import (  # imported late to avoid circular import in legacy tests
-    ProviderError,
-    ProviderNotConfigured,
-    get_registry,
-)
+
 
 
 class _ProviderBackedChain:
@@ -122,6 +117,8 @@ class _ProviderBackedChain:
     IS_STUB = False
 
     def __init__(self, *, role: str, temperature: float):
+        from app.chat.providers import get_registry  # local import
+
         self._role = role
         self._temperature = float(temperature)
         self._registry = get_registry()
@@ -129,6 +126,7 @@ class _ProviderBackedChain:
         self.last_response = None
 
     def _describe_model(self) -> str:
+        from app.chat.providers import ProviderNotConfigured  # local import
         try:
             adapter, model_name, _spec = self._registry.resolve(self._role)
             return f"{adapter.name}:{model_name}"
@@ -136,6 +134,7 @@ class _ProviderBackedChain:
             return "unconfigured"
 
     def predict(self, prompt: str | None = None, **kwargs: Any) -> str:  # pragma: no cover - wrapper
+        from app.chat.providers import ProviderError, ProviderNotConfigured  # local import
         if prompt is None:
             if 'input' in kwargs:
                 prompt = kwargs.pop('input')
@@ -162,7 +161,7 @@ class _ProviderBackedChain:
                 response_format=response_format,
                 max_tokens=max_tokens,
             )
-        except ProviderNotConfigured as exc:
+        except ProviderNotConfigured:
             self.IS_STUB = True
             self._nerion_model_name = "unconfigured"
             return (

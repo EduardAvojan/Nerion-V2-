@@ -10,7 +10,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import time
 
 from selfcoder.vcs import git_ops
 
@@ -185,7 +184,7 @@ def main():
     print(f"Performing dry run of action: {action}")
     outcome = env.step(action)
 
-    print(f"\n--- Environment Step Complete ---")
+    print("\n--- Environment Step Complete ---")
     print(f"Action: rename '{action.old_name}' to '{action.new_name}'")
     print(f"Outcome: {outcome}")
     print(f"Success: {outcome.was_successful}")

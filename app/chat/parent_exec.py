@@ -13,6 +13,7 @@ from app.chat.offline_tools import run_healthcheck as _run_healthcheck, run_diag
 from ops.security import fs_guard as _fs_guard
 import json
 import os
+from app.chat.providers import get_registry, ProviderNotConfigured, ProviderError
 try:
     from ops.security.safe_subprocess import safe_run as _safe_run
 except Exception:

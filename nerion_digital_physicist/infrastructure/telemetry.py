@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 TELEMETRY_FILENAME = "telemetry.jsonl"
 

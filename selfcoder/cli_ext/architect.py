@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import List
 
 from selfcoder.planner.architect_briefs import generate_architect_briefs
 from selfcoder.planner.prioritizer import prioritize_briefs

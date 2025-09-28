@@ -8,6 +8,7 @@ import os
 from .prompt import build_master_prompt
 from .schemas import ParentDecision
 from .tools_manifest import ToolsManifest
+from app.chat.providers import get_registry, ProviderNotConfigured, ProviderError
 try:
     from selfcoder.learning.continuous import load_prefs as _load_prefs
     from selfcoder.learning.continuous import save_prefs as _save_prefs

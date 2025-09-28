@@ -5,7 +5,7 @@ high-level strategic guidance to autonomous agents.
 from pathlib import Path
 import yaml
 import random
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple
 
 CONFIG_PATH = Path("config/meta_policy.yaml")
 

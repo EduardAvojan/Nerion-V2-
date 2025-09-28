@@ -6,7 +6,7 @@ import argparse
 import json
 import shlex
 import sys
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from app.chat.providers import get_registry
 from app.chat.providers.base import ProviderError, ProviderNotConfigured

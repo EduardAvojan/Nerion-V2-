@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import random
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
 
 import torch
-import torch.nn.functional as F
 from torch_geometric.data import Data
 
 from .brain import CodeGraphNN
-from .data import create_graph_data_object
-from .semantics import SemanticEmbedder, get_global_embedder
+from .semantics import SemanticEmbedder
+from ..environment.actions import Action
 from ..environment.refactor_env import RenameAction, TestOutcome
 
 

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import math
 import subprocess
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from core.memory.vector_store import VectorStore
 

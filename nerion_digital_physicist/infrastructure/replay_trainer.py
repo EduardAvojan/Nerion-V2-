@@ -1,7 +1,6 @@
 """Replay-driven training utilities."""
 from __future__ import annotations
 
-from typing import Iterable
 
 import torch
 import torch.nn.functional as F

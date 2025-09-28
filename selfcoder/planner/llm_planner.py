@@ -10,7 +10,6 @@ import json
 import os
 import re
 from typing import Any, Dict, Optional
-from pathlib import Path
 
 from .planner import plan_edits_from_nl as _heuristic_plan
 from selfcoder.plans.schema import ALLOWED_ACTIONS

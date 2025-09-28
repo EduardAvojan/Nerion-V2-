@@ -7,7 +7,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Dict, List, Optional
 
-from ..infrastructure.memory import ReplayStore, REPLAY_FILENAME
+from ..infrastructure.memory import ReplayStore
 from ..infrastructure.registry import CATALOG_FILENAME
 from ..infrastructure.telemetry import TELEMETRY_FILENAME
 

@@ -1,6 +1,5 @@
 """Pytest suite for the scope-sensitive logic module."""
 
-import pytest
 
 from logic_v2 import add_scoped, subtract_scoped, value as global_value
 

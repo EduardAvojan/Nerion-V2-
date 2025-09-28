@@ -17,13 +17,8 @@ import logging
 from ops.security.net_gate import NetworkGate
 import os
 import datetime as dt
-import json
-import hashlib
-import subprocess
 import sys
-from contextlib import suppress
 from pathlib import Path
-from datetime import datetime, timezone
 from .chat.session_state import (
     _load_session_state_if_fresh,
     set_state_accessors,

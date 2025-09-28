@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
 from ops.telemetry import load_operator_snapshot
 from ops.telemetry.knowledge_graph import knowledge_hotspots, load_knowledge_graph

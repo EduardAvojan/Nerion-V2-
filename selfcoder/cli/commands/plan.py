@@ -115,7 +115,6 @@ def _maybe_simulate(args, cmd_name, argv_builder):
         pytest_entry = results.get("pytest", {})
         health_entry = results.get("healthcheck", {})
         pytest_rc = None if pytest_entry.get("skipped") else pytest_entry.get("rc")
-        health_rc = None if health_entry.get("skipped") else health_entry.get("rc")
         health_ok = health_entry.get("ok") if not health_entry.get("skipped") else True
         files_touched = [str(x) for x in changed_files]
         diff_size = len(diff.get("text", "")) if isinstance(diff.get("text"), str) else None

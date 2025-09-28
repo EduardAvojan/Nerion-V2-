@@ -11,7 +11,7 @@ planning pipeline so heuristics/LLM planners inherit telemetry-backed signals.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 import os
 import math
 

@@ -1,6 +1,5 @@
 """Pytest suite defining the rules of the toy universe."""
 
-import pytest
 
 from math_logic import add, multiply
 

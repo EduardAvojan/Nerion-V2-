@@ -1,7 +1,7 @@
 """API-backed coder helper for Nerion V2."""
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 import warnings
 
 from app.chat.providers import (

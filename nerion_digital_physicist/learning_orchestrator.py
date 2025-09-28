@@ -164,7 +164,7 @@ class LearningOrchestrator:
         if not is_approved:
             print(f"[Orchestrator] VETOED by Meta-Policy: {reason}. Halting cycle.")
             return
-        print(f"[Orchestrator] Idea approved by Meta-Policy.")
+        print("[Orchestrator] Idea approved by Meta-Policy.")
 
         # 5. Trigger the curriculum generation process.
         self._trigger_curriculum_generation(idea)

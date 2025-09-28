@@ -7,7 +7,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, Tuple
 
 import networkx as nx
 import torch
@@ -237,7 +237,7 @@ def main():
     print("\nBuilding project graph...")
     graph = parser.build_graph()
 
-    print(f"Graph built successfully.")
+    print("Graph built successfully.")
     print(f"  - Total nodes: {graph.number_of_nodes()}")
     print(f"  - Total edges: {graph.number_of_edges()}")
 
