@@ -9,12 +9,12 @@ Tools: ruff, mypy, bandit, semgrep (optional). Missing tools are skipped.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 import json
 import os
 import sys
 
-def _run(cmd: List[str], cwd: Path | None = None) -> Tuple[int, str, str]:
+def _run(cmd: List[str], cwd: Optional[Path] = None) -> Tuple[int, str, str]:
     try:
         import subprocess
         p = subprocess.run(cmd, cwd=str(cwd) if cwd else None, text=True, capture_output=True, check=False)
@@ -46,7 +46,7 @@ def _normalize_sev(tool: str, raw: str) -> str:
     return 'low'
 
 
-def run_on_dir(root: Path, rel_paths: List[Path] | None = None) -> List[Dict[str, Any]]:
+def run_on_dir(root: Path, rel_paths: Optional[List[Path]] = None) -> List[Dict[str, Any]]:
     root = Path(root)
     files = [p for p in (rel_paths or []) if (root / p).exists()]
     out: List[Dict[str, Any]] = []

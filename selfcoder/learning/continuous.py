@@ -11,7 +11,7 @@ import os
 import time
 import io
 import tempfile
-from typing import Dict, Any, List, Tuple, DefaultDict
+from typing import Dict, Any, List, Tuple, DefaultDict, Optional
 from collections import defaultdict
 
 

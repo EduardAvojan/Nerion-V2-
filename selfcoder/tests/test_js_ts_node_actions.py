@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from typing import Optional
 import shutil
 from selfcoder.actions.js_ts_node import apply_actions_js_ts_node
 
 
-def _maybe_assert_contains(out: str | None, needle: str):
+def _maybe_assert_contains(out: Optional[str], needle: str):
     if out is not None:
         assert needle in out
 

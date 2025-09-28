@@ -1,7 +1,7 @@
 
 
 from __future__ import annotations
-from typing import Dict, Any, Iterable, Tuple
+from typing import Dict, Any, Iterable, Tuple, Optional
 import os
 import json
 import uuid
@@ -28,7 +28,7 @@ def iter_experiences(path: str) -> Iterable[Dict[str, Any]]:
     return _gen()
 
 
-def summarize_notebook(path: str, since_ts: float | None) -> Dict[str, Any]:
+def summarize_notebook(path: str, since_ts: Optional[float]) -> Dict[str, Any]:
     """Compute counts/success rate/intent histogram since a timestamp."""
     total = 0
     success = 0

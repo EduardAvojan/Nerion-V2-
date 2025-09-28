@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from selfcoder.plans.schema import validate_plan
 from ops.security import fs_guard
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import os
 
 import ast
@@ -76,7 +76,7 @@ def _env_true(name: str, default: bool = False) -> bool:
     return str(v).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def prepare_for_prompt(instruction: str) -> None:
+def prepare_for_prompt(instruction: str, file: Optional[Path] = None) -> None:
     """Project-manager style prep for a user prompt.
 
     - If NERION_MODE=user (default) set safe, helpful defaults:
@@ -581,7 +581,7 @@ def _apply_fs_actions(fs_actions: List[Dict[str, Any]], default_target: str | No
         pass
     return created
 
-def run_actions_on_file(path: Path | str, actions: List[Dict[str, Any]], *, dry_run: bool = False) -> bool:
+def run_actions_on_file(path: Path, actions: List[Dict[str, Any]], dry_run: bool = False, *, context: Optional[Dict[str, Any]] = None) -> bool:
     """
     Read a file, apply AST actions, and write back if changed.
     Returns True if a write occurred (or would have in dry_run), else False.

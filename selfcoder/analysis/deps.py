@@ -55,8 +55,8 @@ def scan(
     timeout_outdated: int = 60,
     timeout_audit: int = 120,
     *,
-    providers: Dict[str, Any] | None = None,
-    offline: bool | None = None,
+    providers: Optional[Dict[str, Any]] = None,
+    offline: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Collect freeze, outdated, audit into a single report dict."""
     # Determine offline mode (explicit arg wins; else env var)

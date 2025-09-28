@@ -14,7 +14,7 @@ import tempfile
 import traceback
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional, Union
 
 
 def _mark(ok: bool, warn: bool = False, color: bool = True) -> str:
@@ -241,7 +241,7 @@ def run_diagnostics(*, json_output: bool = False, color: bool = True) -> Tuple[b
     return ok_all, "\n".join(lines) + "\n"
 
 
-def analyze_exception(exc: BaseException, *, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+def analyze_exception(exc: BaseException, *, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Produce a structured, human-actionable analysis of an exception.
 
@@ -319,7 +319,7 @@ def diagnose_call(func, *args, **kwargs) -> Dict[str, Any]:
 
 # --------- helpers ----------------------------------------------------------
 
-def persist_analysis(analysis: Dict[str, Any], outdir: str | Path = "out/analysis_reports") -> Path:
+def persist_analysis(analysis: Dict[str, Any], outdir: Union[str, Path] = "out/analysis_reports") -> Path:
     """Persist an analysis dict to a timestamped JSON file and return its Path."""
     from datetime import datetime
     outdir = Path(outdir)

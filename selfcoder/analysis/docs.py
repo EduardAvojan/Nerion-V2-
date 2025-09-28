@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Union
 from html.parser import HTMLParser
 import hashlib
 from selfcoder.analysis.domain import classify_query
@@ -146,7 +146,7 @@ def _read_cache_meta(url: str) -> Dict[str, Any]:
         return {"hit": False}
 
 
-def _read_cache(url: str) -> str | None:
+def _read_cache(url: str) -> Optional[str]:
     try:
         fp = _cache_name(url)
         if not fp.exists():
@@ -160,7 +160,7 @@ def _read_cache(url: str) -> str | None:
         return None
 
 
-def _write_cache(url: str, text: str, etag: str | None = None, last_mod: str | None = None) -> None:
+def _write_cache(url: str, text: str, etag: Optional[str] = None, last_mod: Optional[str] = None) -> None:
     try:
         _URL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         fp = _cache_name(url)
@@ -216,14 +216,14 @@ def _fetch_url(url: str, *, timeout: int = 30) -> str:
 
 
 def read_doc(
-    path: str | Path | None = None,
+    path: Optional[Union[str, Path]] = None,
     *,
-    url: str | None = None,
-    query: str | None = None,
+    url: Optional[str] = None,
+    query: Optional[str] = None,
     timeout: int = 30,
     render: bool = False,
     render_timeout: int = 12,
-    selector: str | None = None,
+    selector: Optional[str] = None,
 ) -> Dict[str, Any]:
     if (path is None) == (url is None):
         raise ValueError("Provide exactly one of `path` or `url`.")
@@ -335,7 +335,7 @@ def persist_assimilation(bundle: Dict[str, Any]) -> Path:
     return fpath
 
 
-def assimilate(path: str | Path | None = None, *, url: str | None = None, timeout: int = 30, query: str | None = None) -> Dict[str, Any]:
+def assimilate(path: Optional[Union[str, Path]] = None, *, url: Optional[str] = None, timeout: int = 30, query: Optional[str] = None) -> Dict[str, Any]:
     doc = read_doc(path, url=url, query=query, timeout=timeout)
     summary = summarize_text(doc.get("raw_text") or doc["text"])
     bundle = {**doc, **summary}

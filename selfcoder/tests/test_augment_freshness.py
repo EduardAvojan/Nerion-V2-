@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import time
+from typing import Optional
 
 from selfcoder.analysis.augment.external import (
     _parse_window,
@@ -18,7 +18,7 @@ def _recent_iso(days_ago: int = 30) -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(ts))
 
 
-def _should_keep(text: str, fresh_within: str | None) -> bool:
+def _should_keep(text: str, fresh_within: Optional[str]) -> bool:
     """Mimic gather_external's keep logic (length + freshness)."""
     # length gate first
     if len(text) < MIN_TEXT_CHARS:

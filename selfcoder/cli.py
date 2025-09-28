@@ -1019,7 +1019,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = _build_parser()
     # Add small built-in subcommands: init, help (docs/help)
     sub = None

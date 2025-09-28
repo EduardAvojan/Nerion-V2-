@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from . import GateResult, Finding
 from .scanner import scan_source
 from .extlinters import run_on_dir as _run_ext
@@ -22,8 +22,8 @@ def _policy_thresholds() -> int:
 
 def assess_plan(predicted_changes: Dict[str, str], repo_root: Path,
                 block_on_critical: bool = True,
-                block_score_threshold: int | None = None,
-                plan_actions: List[Dict[str, Any]] | None = None) -> GateResult:
+                block_score_threshold: Optional[int] = None,
+                plan_actions: Optional[List[Dict[str, Any]]] = None) -> GateResult:
     all_findings: List[Finding] = []
     score = 0
     has_critical = False

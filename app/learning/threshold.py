@@ -1,7 +1,7 @@
 
 
 from __future__ import annotations
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import os
 import time
 
@@ -47,7 +47,7 @@ def load_learning_policy(path: str = "config/learning.yaml") -> Dict[str, Any]:
     }
 
 
-def days_since(ts: float | None) -> float:
+def days_since(ts: Optional[float]) -> float:
     """Return days elapsed since epoch ts; large sentinel if ts is None."""
     if not ts:
         return 1e9

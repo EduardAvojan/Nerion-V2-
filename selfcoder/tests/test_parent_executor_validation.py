@@ -32,7 +32,7 @@ def test_parent_executor_success_and_metrics():
         # Simulate quick tool success
         return {"ok": True, "url": kwargs.get("url")}
 
-    def _metric(tool: str, ok: bool, dur: float, err: str | None):
+    def _metric(tool: str, ok: bool, dur: float, err: Optional[str]):
         calls.append({"tool": tool, "ok": ok, "dur": dur, "err": err})
 
     ex = ParentExecutor(

@@ -5,13 +5,13 @@ import click
 import datetime
 import shutil
 from pathlib import Path
-from ops.security.fs_guard import ensure_in_repo
+from typing import Optional
 
 SNAPSHOT_DIR = Path(".nerion/snapshots")
 
 @click.command("snapshot")
 @click.argument("label", required=False)
-def cli(label: str | None = None) -> None:
+def cli(label: Optional[str] = None) -> None:
     """
     Create a filesystem snapshot under .nerion/snapshots with an optional label.
     Ensures snapshot path is confined within the repository root.

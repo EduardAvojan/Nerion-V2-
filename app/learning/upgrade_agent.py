@@ -51,7 +51,7 @@ def _count_recent_knowledge(since_ts: Optional[float]) -> int:
         return 0
 
 
-def _tonight_timestamp(now: float | None = None) -> float:
+def _tonight_timestamp(now: Optional[float] = None) -> float:
     t = time.localtime(now or _now())
     # schedule at 02:00 local next day
     next_day = time.mktime((t.tm_year, t.tm_mon, t.tm_mday + 1, 2, 0, 0, 0, 0, -1))
@@ -188,7 +188,7 @@ def handle_choice(reply: str, watcher=None) -> bool:
     return False
 
 
-def maybe_offer_upgrade(watcher=None, *, threshold: int = 5, ptt_mode: bool | None = None) -> None:
+def maybe_offer_upgrade(watcher=None, *, threshold: int = 5, ptt_mode: Optional[bool] = None) -> None:
     """If sufficient new knowledge accumulated and not snoozed, offer a self‑learning upgrade.
 
     Offers a voice prompt: Upgrade now / Remind me later / Tonight.

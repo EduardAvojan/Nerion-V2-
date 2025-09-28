@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import List, Dict, Any
 
 
-def postprocess_attr_renames(updated: str, actions: List[Dict[str, Any]] | None) -> str:
+def postprocess_attr_renames(updated: str, actions: Optional[List[Dict[str, Any]]]) -> str:
     """Fix bare-name references when an action renames a from-import attribute.
 
     Returns the potentially updated source code string.

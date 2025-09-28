@@ -13,7 +13,7 @@ supports both during the transition.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Union
 
 # Thin façade over core journal (transition-safe import)
 try:
@@ -26,7 +26,7 @@ except Exception:
     except Exception:  # pragma: no cover – fail soft to avoid breaking app flows
         _core = None  # type: ignore
 
-def append(entry: Dict[str, Any], path: Path | str | None = None) -> None:
+def append(entry: Dict[str, Any], path: Optional[Union[Path, str]] = None) -> None:
     """Append a journal entry, delegating to core journal.
 
     Backward-compat signature preserved ("path" arg ignored). We normalize the
@@ -48,7 +48,7 @@ def append(entry: Dict[str, Any], path: Path | str | None = None) -> None:
         # best-effort logging; never let journal issues break main flow
         pass
 
-def tail(n: int = 20, path: Path | str | None = None) -> List[Dict[str, Any]]:
+def tail(n: int = 20, path: Optional[Union[Path, str]] = None) -> List[Dict[str, Any]]:
     """Return last N entries via core timeline.
 
     Best-effort: never let journal issues break main flow.
@@ -60,7 +60,7 @@ def tail(n: int = 20, path: Path | str | None = None) -> List[Dict[str, Any]]:
     except Exception:
         return []
 
-def by_day(day_iso: str, path: Path | str | None = None) -> List[Dict[str, Any]]:
+def by_day(day_iso: str, path: Optional[Union[Path, str]] = None) -> List[Dict[str, Any]]:
     """Return entries whose ISO date prefix matches YYYY-MM-DD.
 
     Best-effort: never let journal issues break main flow.
@@ -76,7 +76,7 @@ def by_day(day_iso: str, path: Path | str | None = None) -> List[Dict[str, Any]]
     except Exception:
         return []
 
-def query(kind: str | None = None, since: str | None = None, until: str | None = None, contains: str | None = None, limit: int = 200) -> List[Dict[str, Any]]:
+def query(kind: Optional[str] = None, since: Optional[str] = None, until: Optional[str] = None, contains: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     """Thin facade over core query, best-effort."""
     try:
         if _core is None:

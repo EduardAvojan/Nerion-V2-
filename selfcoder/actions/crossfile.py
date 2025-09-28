@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple, Union, Iterable
+from typing import Dict, List, Sequence, Tuple, Union, Iterable, Optional
 import os
 import re
 from fnmatch import fnmatch
@@ -134,14 +134,7 @@ def _apply_to_text(text: str, specs: Sequence[RenameSpec]) -> Tuple[str, int]:
 
 # ------------------------------- Public API -------------------------------- #
 
-def apply_crossfile_rename(
-    specs: Sequence[RenameSpec],
-    *,
-    files: Sequence[Union[str, Path]] | None = None,
-    project_root: Path | None = None,
-    include: Sequence[str] | None = None,
-    exclude: Sequence[str] | None = None,
-) -> Tuple[int, List[Path]]:
+def apply_crossfile_rename(specs: List[RenameSpec], files: Optional[List[str]] = None, project_root: Optional[Path] = None) -> Dict[str, str]:
     """Apply *specs* under *project_root* or to specific *files*."""
     root = Path(project_root or Path.cwd())
 

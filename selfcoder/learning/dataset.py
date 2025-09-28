@@ -9,7 +9,7 @@ starting point for local adapters.
 
 from __future__ import annotations
 
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from pathlib import Path
 import json
 import re
@@ -17,7 +17,7 @@ import re
 LOG_PATH = Path('out/experience/log.jsonl')
 
 
-def _since_to_ts(spec: str | None) -> float | None:
+def _since_to_ts(spec: Optional[str]) -> Optional[float]:
     if not spec:
         return None
     s = str(spec).strip().lower()
@@ -31,7 +31,7 @@ def _since_to_ts(spec: str | None) -> float | None:
     return None
 
 
-def build_dataset(*, since: str | None = None, domain: str | None = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def build_dataset(*, since: Optional[str] = None, domain: Optional[str] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     ds: List[Dict[str, Any]] = []
     if not LOG_PATH.exists():
         return ds, {"count": 0}

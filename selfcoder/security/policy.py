@@ -165,7 +165,7 @@ def _match_any(path: Path, patterns: List[str]) -> bool:
     return False
 
 
-def enforce_actions(plan_actions: List[Dict[str, Any]] | None, policy: Dict[str, Any]) -> Tuple[bool, str]:
+def enforce_actions(plan_actions: Optional[List[Dict[str, Any]]], policy: Dict[str, Any]) -> Tuple[bool, str]:
     acts = plan_actions or []
     pol = policy.get('actions') or {}
     allow = [str(a) for a in (pol.get('allow') or []) if isinstance(a, str)]

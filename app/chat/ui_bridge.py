@@ -75,7 +75,7 @@ def send_event(payload: dict) -> None:
             pass
 
 
-def send_patch_event(event_type: str, payload: dict[str, Any] | None = None) -> None:
+def send_patch_event(event_type: str, payload: Optional[dict[str, Any]] = None) -> None:
     data: dict[str, Any] = {"type": event_type}
     if payload is not None:
         data["payload"] = payload

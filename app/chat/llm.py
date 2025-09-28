@@ -133,7 +133,7 @@ class _ProviderBackedChain:
         except ProviderNotConfigured:
             return "unconfigured"
 
-    def predict(self, prompt: str | None = None, **kwargs: Any) -> str:  # pragma: no cover - wrapper
+    def predict(self, prompt: Optional[str] = None, **kwargs: Any) -> str:  # pragma: no cover - wrapper
         from app.chat.providers import ProviderError, ProviderNotConfigured  # local import
         if prompt is None:
             if 'input' in kwargs:

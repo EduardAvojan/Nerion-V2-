@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union, Optional
 import logging
 import inspect
 
@@ -13,7 +13,7 @@ from ops.security import fs_guard
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-def _ensure_repo_path(p: str | Path) -> Path:
+def _ensure_repo_path(p: Union[str, Path]) -> Path:
     """Resolve and enforce that the path is inside the repository root."""
     return fs_guard.ensure_in_repo(REPO_ROOT, str(p))
 
@@ -31,7 +31,7 @@ def _plan_from_request(request: str) -> List[Dict[str, Any]]:
 essay = """Nerion autocoder (minimal).\n\nThis command reads a Python file, derives a tiny action plan from\n`--request`, and applies those actions via AST. In `--dry-run` mode,\nit only parses and transforms in-memory to validate the pipeline.\n"""
 
 
-def main(argv: List[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     # Normalize argv in case the first token was passed as a single string with spaces
     # (some shells/scripts may pass "add logging" as one token).
     if argv is None:

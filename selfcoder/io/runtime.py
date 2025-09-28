@@ -8,14 +8,14 @@ import subprocess
 import sys
 import pathlib
 import shutil
-import datetime as _dt
+from typing import Optional
 
 from selfcoder.config import ROOT, BACKUP_DIR
 from ops.security import fs_guard
 from ops.security.safe_subprocess import safe_run
 
 
-def run(cmd: list[str], cwd: pathlib.Path | None = None, check: bool = False) -> subprocess.CompletedProcess:
+def run(cmd: list[str], cwd: Optional[pathlib.Path] = None, check: bool = False) -> subprocess.CompletedProcess:
     """Run a subprocess safely; capture output; optional working dir.
 
     Be tolerant of different `safe_run` signatures across environments by

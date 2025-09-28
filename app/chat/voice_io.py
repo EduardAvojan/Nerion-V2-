@@ -237,7 +237,7 @@ except Exception:  # pragma: no cover
 _STT_BACKEND = (os.getenv('NERION_STT_BACKEND') or 'auto').strip().lower()
 _STT_MODEL = (os.getenv('NERION_STT_MODEL') or 'small').strip().lower()
 
-def set_stt_profile(backend: str | None = None, model: str | None = None) -> None:
+def set_stt_profile(backend: Optional[str] = None, model: Optional[str] = None) -> None:
     """Set preferred STT backend/model for this session and downstream recognizer."""
     global _STT_BACKEND, _STT_MODEL
     if backend:

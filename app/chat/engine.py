@@ -99,8 +99,8 @@ def _dbg(msg: str) -> None:
 
 
 TRUTHY = {'1', 'true', 'yes', 'on'}
-_SESSION_CACHE: SessionCache | None = None
-_MEMORY_STORE: LongTermMemory | None = None
+_SESSION_CACHE: Optional[SessionCache] = None
+_MEMORY_STORE: Optional[LongTermMemory] = None
 
 
 class _VirtualPTTWatcher(SimpleNamespace):
@@ -374,7 +374,7 @@ def _collect_user_input(STATE, chat, watcher):
     return _collect_open_input(STATE, chat, watcher)
 
 
-def _predict_with_timeout(chain, prompt: str, timeout_s: float | None):
+def _predict_with_timeout(chain, prompt: str, timeout_s: Optional[float]):
     if timeout_s is not None:
         try:
             timeout_val = float(timeout_s)
@@ -490,7 +490,7 @@ def _load_last_artifact_from_state(state, max_chars: int = 12000) -> Optional[st
 # ---- Parent + Notebook wiring (Incubator Phase 1) -----------------------------------
 # Parent ON by default; set NERION_USE_PARENT=0/false/no to disable
 
-def _env_false(val: str | None) -> bool:
+def _env_false(val: Optional[str]) -> bool:
     return (val or '').strip().lower() in {'0', 'false', 'no'}
 
 _PARENT_ENABLED = not _env_false(os.getenv('NERION_USE_PARENT'))
@@ -545,7 +545,7 @@ if _PARENT_ENABLED:
 
 
 # ---- Experience Logger helper -----------------------------------
-def _log_experience(user_query: str, parent_decision: dict | None, action_taken: dict, success: bool, error: str | None = None, network_used: bool | None = None):
+def _log_experience(user_query: str, parent_decision: Optional[dict], action_taken: dict, success: bool, error: Optional[str] = None, network_used: Optional[bool] = None):
     try:
         _LOGGER.log(
             user_query=user_query,
@@ -1332,7 +1332,7 @@ def run_main_loop(STATE, voice_cfg) -> None:
 
             # === PARENT EXECUTOR BINDINGS BEGIN (ANCHOR) ===
             # Metrics hook for Parent tool execution
-            def _metric_hook(tool: str, ok: bool, dur: float, err: str | None):
+            def _metric_hook(tool: str, ok: bool, dur: float, err: Optional[str]):
                 try:
                     _log_experience(
                         heard,

@@ -1,8 +1,8 @@
 # selfcoder/scoring.py
 from __future__ import annotations
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-def score_plan(plan: Dict[str, Any], sim: Dict[str, Any] | None = None) -> tuple[int, str]:
+def score_plan(plan: Dict[str, Any], sim: Optional[Dict[str, Any]] = None) -> tuple[int, str]:
     """
     Returns (score, rationale). Inputs:
       - plan: validated plan dict

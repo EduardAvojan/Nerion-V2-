@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - optional telemetry
 def plan_from_text(
     instruction: str,
     *,
-    target_file: str | None = None,
+    target_file: Optional[str] = None,
     brief_context: BriefContext = None,
 ) -> dict:
     """
@@ -38,18 +38,18 @@ def plan_from_text(
       - Emits a clarification payload when the instruction is empty or when an intent like
         "insert function"/"insert class" lacks a required symbol name.
     """
-    def _quoted(s: str) -> str | None:
+    def _quoted(s: str) -> Optional[str]:
         m = re.search(r"['\"]([^'\"]+)['\"]", s)
         return m.group(1) if m else None
 
-    def _find_filename(s: str) -> str | None:
+    def _find_filename(s: str) -> Optional[str]:
         q = _quoted(s)
         if q and q.strip().endswith(".py"):
             return q.strip()
         m = re.search(r"([A-Za-z0-9_./-]+\.py)\b", s)
         return m.group(1) if m else None
 
-    def _func_name(s: str) -> str | None:
+    def _func_name(s: str) -> Optional[str]:
         # Prefer explicit patterns like "to function greet" / "function greet"
         # Handle common phrasing like "function named get_weather" or "function name get_weather".
         m = re.search(r"\bfunction\s+(?:named|name)\s+([A-Za-z_]\w*)\b", s, flags=re.I)
@@ -69,17 +69,17 @@ def plan_from_text(
             return None
         return name
 
-    def _class_name(s: str) -> str | None:
+    def _class_name(s: str) -> Optional[str]:
         m = re.search(r"\bclass\s+([A-Za-z_]\w*)", s, flags=re.I)
         return m.group(1) if m else None
 
-    def _target_file_hint(s: str) -> str | None:
+    def _target_file_hint(s: str) -> Optional[str]:
         m = re.search(r"\b(?:in|into|to)\s+([A-Za-z0-9_./-]+\.py)\b", s, flags=re.I)
         return m.group(1) if m else None
 
     norm = instruction.lower()
     actions: list[dict[str, Any]] = []
-    file_hint: str | None = _target_file_hint(instruction)
+    file_hint: Optional[str] = _target_file_hint(instruction)
     if target_file is None and file_hint:
         target_file = file_hint
     if brief_context and not target_file:
@@ -248,7 +248,7 @@ def plan_from_text(
 
 def plan_edits_from_nl(
     instruction: str,
-    file: str | None = None,
+    file: Optional[str] = None,
     scaffold_tests: bool = True,
     brief_context: BriefContext = None,
 ) -> dict:
