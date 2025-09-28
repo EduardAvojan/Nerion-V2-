@@ -46,7 +46,7 @@ DEFAULT_GIT_SINCE = "120.days"
 DEFAULT_GIT_MAX_COUNT = "500"
 
 
-@dataclass(slots=True)
+@dataclass
 class KnowledgeNode:
     """Represents a component or entity in the knowledge graph."""
 
@@ -57,7 +57,7 @@ class KnowledgeNode:
     attributes: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class KnowledgeEdge:
     """Relationship between nodes in the knowledge graph."""
 
@@ -67,7 +67,7 @@ class KnowledgeEdge:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class KnowledgeGraph:
     """Container for Nerion's knowledge graph snapshot."""
 
