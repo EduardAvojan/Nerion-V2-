@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Set, Tuple
 import networkx as nx
 import torch
 from torch_geometric.data import Data
+from .semantics import get_global_embedder
 
 # Directories to ignore during file discovery
 IGNORE_DIRS = {
@@ -161,7 +162,6 @@ class ProjectParser:
 
         return None
 
-from .semantics import get_global_embedder
 
 def _extract_node_snippet(node_id: str, node_data: dict, parser: ProjectParser) -> Tuple[str, str]:
     """Extracts a name and code snippet for a given node."""

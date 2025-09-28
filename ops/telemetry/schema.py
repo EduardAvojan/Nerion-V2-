@@ -56,7 +56,7 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-@dataclass(slots=True)
+@dataclass
 class TelemetryEvent:
     """Structured telemetry event.
 
