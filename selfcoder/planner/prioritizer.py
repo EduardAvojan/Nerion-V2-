@@ -78,7 +78,7 @@ def get_policy_thresholds(policy: str) -> Dict[str, float]:
     return dict(_thresholds_for_policy(policy))
 
 
-@dataclass(slots=True)
+@dataclass
 class PrioritizedBrief:
     """Wraps an ArchitectBrief with policy-aware metadata."""
 

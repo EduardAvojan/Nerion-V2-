@@ -59,7 +59,7 @@ _OVERRIDE_ENVS = (
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class GovernorDecision:
     """Outcome of a governor check."""
 

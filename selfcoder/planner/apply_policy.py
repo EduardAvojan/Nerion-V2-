@@ -48,7 +48,7 @@ def _merge_reasons(existing: List[str], extra: Iterable[Any]) -> None:
             existing.append(text)
 
 
-@dataclass(slots=True)
+@dataclass
 class ApplyPolicyDecision:
     """Container describing whether a plan may auto-apply under current policy."""
 

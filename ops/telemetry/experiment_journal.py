@@ -36,7 +36,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-@dataclass(slots=True)
+@dataclass
 class ExperimentRecord:
     id: str
     title: str

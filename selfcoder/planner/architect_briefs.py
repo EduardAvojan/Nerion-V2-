@@ -24,7 +24,7 @@ COVERAGE_FILE = Path("coverage.json")
 ROADMAP_FILE = Path("AGENTS.md")
 
 
-@dataclass(slots=True)
+@dataclass
 class ArchitectBrief:
     """Structured upgrade brief for the architect planning loop."""
 
