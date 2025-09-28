@@ -58,7 +58,7 @@ multidict==6.6.4
     # via
     #   aiohttp
     #   yarl
-networkx==3.5
+networkx==3.2.1
     # via
     #   nerion-selfcoder (pyproject.toml)
     #   torch
