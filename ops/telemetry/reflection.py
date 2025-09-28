@@ -50,7 +50,7 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-@dataclass(slots=True)
+@dataclass
 class ReflectionConfig:
     """Runtime configuration for a reflection run."""
 
@@ -66,7 +66,7 @@ class ReflectionConfig:
         return (start.isoformat().replace("+00:00", "Z"), end.isoformat().replace("+00:00", "Z"))
 
 
-@dataclass(slots=True)
+@dataclass
 class ClusterSummary:
     tag: str
     event_ids: List[str] = field(default_factory=list)
@@ -74,7 +74,7 @@ class ClusterSummary:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class Anomaly:
     kind: str
     detail: str
@@ -82,7 +82,7 @@ class Anomaly:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class ReflectionSummary:
     timestamp: str
     window_start: str
