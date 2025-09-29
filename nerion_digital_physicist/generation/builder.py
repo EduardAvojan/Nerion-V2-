@@ -16,6 +16,7 @@ from .templates import (
     ArithmeticPipelineTemplate,
     OffByOneBugTemplate,
     RefactorDuplicateCodeTemplate,
+    AdvancedCurriculumTemplate,
 )
 from .templates.base import Template
 
@@ -38,6 +39,10 @@ TEMPLATE_FACTORIES = {
     "refactor_duplicate_code": TemplateFactory(
         template_id="refactor_duplicate_code",
         constructor=RefactorDuplicateCodeTemplate,
+    ),
+    "advanced_curriculum": TemplateFactory(
+        template_id="advanced_curriculum",
+        constructor=AdvancedCurriculumTemplate,
     ),
 }
 
@@ -76,6 +81,7 @@ class TaskBuilder:
         params = dict(template.default_parameters)
         if parameters:
             params.update(parameters)
+        params.setdefault("seed", seed)
 
         manifest_id = uuid.uuid4().hex
         target_dir = self.output_root / template_id / manifest_id

@@ -253,3 +253,16 @@
 * **Next Step:** Continue Phase 4 by leveraging checkpointed brains for larger-scale runs and updating remaining docs to reference the new structure.
 
 ---
+
+**Session 38 (2025-09-29):**
+* **Goal:** Ship the Phase 3 architecture experiments for the structural brain.
+* **Progress:** Added residual/pooling/attention configurability to `nerion_digital_physicist/agent/brain.py`, instrumented `training/run_training.py` with ROC-AUC/F1 logging and new CLI knobs, expanded `training/sweep.py` to cover pooling/residual/head sweeps, and documented the workflow in `nerion_digital_physicist/AGENTS.md` plus `docs/evolution_plan.md`. Ran a targeted sweep (`20250929T011032Z`) that promoted a residual GAT (256 hidden, sum pooling, four heads) and synced the checkpoint/metadata for curriculum vetting.
+* **Next Step:** Begin Phase 4 pretraining work by introducing contrastive objectives and scaling the replay dataset before the multi-thousand lesson campaign.
+
+---
+- **2025-09-29** – Digital Physicist pretraining lift
+  - Exported unlabeled curriculum graphs via `training.dataset_builder --mode pretrain` (202 graphs / 33 features) and ran masked-node pretraining (`training.pretrain`, mask_prob 0.2) to generate `digital_physicist_pretrain.pt` (best val loss ≈92.5).
+- Warm-started supervised training with the pretrained encoder; GAT (256 hidden, residual, pooling=sum, lr=5e-4) achieved val acc 0.75 / AUC 0.682 / F1 0.643 at epoch 22 (`experiments/runs/gnn/20250929T024306Z`). Cold start topped out at 0.70 / 0.652 / 0.647.
+- Lightweight sweep (`training.sweep --pretrained`) identified comparable configs; lr 5e-4 matched 0.75 acc with steadier loss, lr 1e-3 delivered 0.725 acc with higher AUC (0.755), and an extended pass surfaced dropout 0.3 as a sweet spot (val acc 0.775 / F1 0.71). Promote `digital_physicist_brain.pt` accordingly.
+- Automated upkeep script `scripts/run_pretraining_cycle.sh` now chains dataset export → pretraining → warm-start fine-tune so cron jobs can keep the structural brain fresh.
+- Added `scripts/structural_metrics_report.py` to watch `out/learning/structural_metrics.jsonl`; run it nightly (`--hours 24 --limit 200`) to track pass rate, average Δ, and surface failing lessons for review.

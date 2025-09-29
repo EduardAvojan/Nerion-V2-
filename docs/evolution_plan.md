@@ -69,3 +69,16 @@
     - Analyze git commit history to see which changes succeed or fail.
     - Learn strategies that produce stable improvements.
     - Adjust future self-coding behavior accordingly.
+
+## Phase 3 – Structural Brain Experiments (2025-09-29)
+- **Datasets & Signals:** `experiments/datasets/gnn/latest/<timestamp>/dataset.pt` now packages structural logits, semantic channels, and per-edge roles. The training CLI accepts explicit dataset paths so new snapshots remain immutable while `manifest.json` tracks provenance.
+- **Training Workflow:** `training/run_training.py` exposes `--pooling`, `--num-layers`, `--residual`, `--dropout`, and `--attention-heads` switches. Each epoch logs loss/accuracy plus ROC-AUC and F1, and the CLI writes run metadata + checkpoints into `experiments/runs/gnn/<timestamp>/` while updating `digital_physicist_brain.pt`/`.meta.json` for the active brain.
+- **Sweeps & Versioning:** `training/sweep.py` fans out over architecture, pooling, residual flags, dropout, and head counts. Results land in structured combo directories (e.g. `experiments/runs/gnn_sweeps/archgat_h256_poolsum_res1_.../`), each with `metrics.json` capturing history and best epoch stats alongside the checkpoint.
+- **Current Best Model:** Residual GAT (256 hidden channels, sum pooling, 4 heads) leads with val acc 0.725 / AUC 0.773 / F1 0.732 (run `20250929T011032Z`). The metadata file mirrors these hyperparameters so structural vetting instantiates the correct encoder + pooling when grading lessons.
+
+## Self-Supervision & Pretraining (2025-10-12)
+- **Pretraining Corpus:** `training/dataset_builder.py --mode pretrain` exports unlabeled curriculum graphs into `experiments/datasets/gnn/pretrain/<timestamp>/` with manifests mirroring provenance and feature counts.
+- **Masked-Node Objective:** `training/pretrain.py` runs a masked-node reconstruction loop (configurable `--mask-prob`, architecture, residual, heads) and saves `digital_physicist_pretrain.pt` plus `digital_physicist_pretrain.meta.json` so the latest encoder warm-start is discoverable.
+- **Fine-Tune Hook:** `training/run_training.py` now accepts `--pretrained` to load the masked-node weights (with graceful head-mismatch handling) before supervised training, and records the source path in the refreshed `digital_physicist_brain.meta.json`.
+- **Observed Lift (2025-09-29 batch):** Cold-start GAT peaked at val acc 0.70 / AUC 0.65 / F1 0.65 (`20250929T023909Z`); warm-starting from `digital_physicist_pretrain.pt` reached 0.75 / 0.68 / 0.64 (`20250929T024306Z`) and extended sweeps pushed to 0.775 / 0.69 / 0.71 with dropout 0.3 (lr 1e-3).
+- **Monitoring:** `scripts/structural_metrics_report.py` summarises pass/fail/Δ trends from `out/learning/structural_metrics.jsonl`; schedule it post-deploy to keep lesson health visible.

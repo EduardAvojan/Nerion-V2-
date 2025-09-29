@@ -109,3 +109,13 @@ tmp/*.json
 gha-creds-*.json
 project_graph_cache.pt
 requirements.txt
+
+# Gemini-specific files
+GEMINI.md
+
+# Agent documentation generated locally
+**/AGENTS.md
+
+# Training artefacts
+experiments/datasets/
+experiments/runs/

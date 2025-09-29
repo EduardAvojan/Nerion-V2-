@@ -1,0 +1,13 @@
+{
+  "architecture": "gat",
+  "best_val_loss": 92.49527740478516,
+  "dataset_path": "experiments/datasets/gnn/latest/pretrain/20250929T023657Z/dataset.pt",
+  "dropout": 0.2,
+  "epochs": 30,
+  "hidden_channels": 256,
+  "mask_prob": 0.2,
+  "num_layers": 4,
+  "residual": false,
+  "run_dir": "experiments/runs/gnn_pretrain/20250929T023710Z",
+  "trained_at": "2025-09-29T02:37:10.373472+00:00"
+}

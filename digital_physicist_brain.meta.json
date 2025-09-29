@@ -1,0 +1,17 @@
+{
+  "architecture": "gat",
+  "attention_heads": 4,
+  "best_epoch": 2,
+  "best_val_accuracy": 0.75,
+  "best_val_auc": 0.7794486215538847,
+  "best_val_f1": 0.7368421052631579,
+  "dropout": 0.3,
+  "hidden_channels": 256,
+  "num_layers": 4,
+  "num_node_features": 33,
+  "pooling": "sum",
+  "pretrained_source": "digital_physicist_pretrain.pt",
+  "residual": true,
+  "run_dir": "experiments/runs/gnn/20250929T024629Z",
+  "trained_at": "2025-09-29T02:46:29.984094+00:00"
+}
