@@ -30,6 +30,8 @@ dependencies = [
   "click>=8.0,<8.2",
   "psutil>=5.9",
   "watchdog>=3.0",
+  "hypothesis>=6.0",
+  "trio>=0.31",
 ]
 
 [project.urls]

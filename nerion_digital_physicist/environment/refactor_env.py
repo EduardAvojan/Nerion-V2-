@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import subprocess
 import os
+import networkx as nx
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+
+from nerion_digital_physicist.infrastructure.knowledge_graph import KnowledgeGraph
 
 from selfcoder.vcs import git_ops
 
@@ -38,8 +41,9 @@ class RefactorEnvironment:
     and report the outcome.
     """
 
-    def __init__(self, project_root: str | Path):
+    def __init__(self, project_root: str | Path, knowledge_graph: KnowledgeGraph | None = None):
         self.project_root = Path(project_root).resolve()
+        self.knowledge_graph = knowledge_graph
 
     def step(self, action: RenameAction) -> TestOutcome:
         """
@@ -68,7 +72,8 @@ class RefactorEnvironment:
 
             # 3. Run the project's test suite
             print("Running test suite...")
-            outcome = self._run_tests()
+            affected_tests = self._get_affected_tests(action.file_path)
+            outcome = self._run_tests(affected_tests)
             print(f"Outcome: {outcome.passed} passed, {outcome.failed} failed, {outcome.errored} errored.")
 
             return outcome
@@ -138,7 +143,20 @@ class RefactorEnvironment:
 
         return TestOutcome(passed=passed, failed=failed, errored=errored)
 
-    def _run_tests(self) -> TestOutcome:
+    def _get_affected_tests(self, file_path: str) -> list[str]:
+        """Get a list of test files affected by a change to the given file."""
+        if not self.knowledge_graph:
+            return []
+
+        affected_tests = set()
+        # Find all test files that have a dependency path to the changed file
+        for node in self.knowledge_graph.graph.nodes():
+            if "test" in node and node.endswith(".py"):
+                if nx.has_path(self.knowledge_graph.graph, source=node, target=file_path):
+                    affected_tests.add(node)
+        return list(affected_tests)
+
+    def _run_tests(self, test_files: list[str] | None = None) -> TestOutcome:
         """
         Runs the pytest suite in a clean, isolated subprocess.
         """
@@ -154,6 +172,9 @@ class RefactorEnvironment:
             sys.executable, "-m", "pytest",
             "-p", "no:cacheprovider",
         ]
+
+        if test_files:
+            command.extend(test_files)
 
         proc = subprocess.run(
             command, 

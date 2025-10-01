@@ -1,6 +1,2 @@
-llm:
-  roles:
-    planner: openai:gpt-5
-
 voice:
   always_speak: true

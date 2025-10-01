@@ -1,1 +1,84 @@
-{}
+{
+  "97131bc8a100d14cd1056eb36db95f62bb254146:/private/var/folders/p0/4gw0vtk154l2z_sn3syy5wjc0000gn/T/pytest-of-ed/pytest-323/test_generated_plan_applied0/auto.py:add module docstring 'Auto demo':brief-app-9a0b3c09:auto": {
+    "actions": [
+      {
+        "kind": "add_module_docstring",
+        "payload": {
+          "doc": "Auto demo"
+        }
+      }
+    ],
+    "preconditions": [
+      "file_exists:/private/var/folders/p0/4gw0vtk154l2z_sn3syy5wjc0000gn/T/pytest-of-ed/pytest-323/test_generated_plan_applied0/auto.py"
+    ],
+    "postconditions": [
+      "no_unresolved_imports",
+      "tests_collect"
+    ],
+    "metadata": {
+      "source": "natural_language",
+      "target_file": "/private/var/folders/p0/4gw0vtk154l2z_sn3syy5wjc0000gn/T/pytest-of-ed/pytest-323/test_generated_plan_applied0/auto.py",
+      "clarify_required": false,
+      "architect_brief": {
+        "id": "brief-app-9a0b3c09",
+        "component": "app",
+        "title": "Reduce risk in app",
+        "decision": "auto",
+        "policy": "balanced",
+        "risk_score": 0.0,
+        "effort_score": 0.0,
+        "estimated_cost": 0.0,
+        "effective_priority": 0.0,
+        "reasons": [],
+        "summary": "Stabilise app: Risk score 0.0, recent fixes 0",
+        "suggested_targets": [
+          "app"
+        ],
+        "alternates": [
+          {
+            "id": "brief-backups-d5cc0d8c",
+            "component": "backups",
+            "decision": "auto",
+            "effective_priority": 0.0,
+            "risk_score": 0.0
+          },
+          {
+            "id": "brief-core-93369bff",
+            "component": "core",
+            "decision": "auto",
+            "effective_priority": 0.0,
+            "risk_score": 0.0
+          },
+          {
+            "id": "brief-nerion_digital_physicist-e7df91a4",
+            "component": "nerion_digital_physicist",
+            "decision": "auto",
+            "effective_priority": 0.0,
+            "risk_score": 0.0
+          }
+        ],
+        "gating": {
+          "risk": {
+            "score": 0.0,
+            "review": 6.0,
+            "block": 10.0
+          },
+          "effort": {
+            "score": 0.0,
+            "review": 5.0,
+            "block": 8.5
+          },
+          "cost": {
+            "estimate": 0.0,
+            "budget": 600.0
+          }
+        }
+      },
+      "helper": "plan_edits_from_nl",
+      "scaffold_tests": true,
+      "target_file_override": "/private/var/folders/p0/4gw0vtk154l2z_sn3syy5wjc0000gn/T/pytest-of-ed/pytest-323/test_generated_plan_applied0/auto.py"
+    },
+    "bundle_id": "cad34f0bdde3480f88bd86defdf40284",
+    "target_file": "/private/var/folders/p0/4gw0vtk154l2z_sn3syy5wjc0000gn/T/pytest-of-ed/pytest-323/test_generated_plan_applied0/auto.py"
+  }
+}

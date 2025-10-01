@@ -5,6 +5,7 @@ and their relationships, including imports.
 from __future__ import annotations
 
 import ast
+import sys
 import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -87,10 +88,11 @@ class ProjectParser:
                 }
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    imports.append(alias.name)
+                    imports.append({"module": alias.name, "name": None, "level": 0})
             elif isinstance(node, ast.ImportFrom):
                 if node.module:
-                    imports.append(node.module)
+                    for alias in node.names:
+                        imports.append({"module": node.module, "name": alias.name, "level": node.level})
 
         self.parsed_files[relative_path] = {
             "path": relative_path,
@@ -129,36 +131,56 @@ class ProjectParser:
                 resolved_path = self._resolve_import(imp, Path(file_path).parent)
                 if resolved_path and graph.has_node(resolved_path):
                     graph.add_edge(file_path, resolved_path, type="IMPORTS")
+                    graph.add_edge(file_path, resolved_path, type="DEPENDS_ON")
 
         return graph
 
-    def _resolve_import(self, import_name: str, current_dir: Path) -> str | None:
+    def _resolve_import(self, imp: dict, current_dir: Path) -> str | None:
         """
-        Resolves an import name to a relative file path.
+        Resolves an import to a relative file path.
         """
-        try:
-            # Try to resolve as a file (e.g., `from . import foo` -> `foo.py`)
-            potential_path = (current_dir / f"{import_name}.py").relative_to(self.project_root)
-            if str(potential_path) in self.parsed_files:
-                return str(potential_path)
+        module_name = imp["module"]
+        level = imp["level"]
 
-            # Try to resolve as a package/directory (e.g., `import foo` -> `foo/__init__.py`)
-            potential_path = (current_dir / import_name / "__init__.py").relative_to(self.project_root)
-            if str(potential_path) in self.parsed_files:
-                return str(potential_path)
-        except ValueError:
-            # This happens if the path is not within the project root (e.g., a stdlib import)
-            pass
-        
-        # Try absolute import from project root
-        abs_path_str = import_name.replace(".", "/")
-        potential_path_file = Path(f"{abs_path_str}.py")
-        if str(potential_path_file) in self.parsed_files:
-            return str(potential_path_file)
-        
-        potential_path_pkg = Path(f"{abs_path_str}/__init__.py")
-        if str(potential_path_pkg) in self.parsed_files:
-            return str(potential_path_pkg)
+        if level > 0:  # Relative import
+            # Resolve the path based on the level
+            base_path = current_dir
+            for _ in range(level - 1):
+                base_path = base_path.parent
+            
+            # Check for module as a .py file
+            potential_path = base_path / f"{module_name.replace('.', '/')}.py"
+            try:
+                if str(potential_path.relative_to(self.project_root)) in self.parsed_files:
+                    return str(potential_path.relative_to(self.project_root))
+            except ValueError:
+                pass
+
+            # Check for module as a package
+            potential_path = base_path / module_name.replace('.', '/') / "__init__.py"
+            try:
+                if str(potential_path.relative_to(self.project_root)) in self.parsed_files:
+                    return str(potential_path.relative_to(self.project_root))
+            except ValueError:
+                pass
+
+        else:  # Absolute import
+            for path_entry in [self.project_root] + [Path(p) for p in sys.path if p]:
+                # Check for module as a .py file
+                potential_path = path_entry / f"{module_name.replace('.', '/')}.py"
+                try:
+                    if potential_path.exists() and self.project_root in potential_path.parents and str(potential_path.relative_to(self.project_root)) in self.parsed_files:
+                        return str(potential_path.relative_to(self.project_root))
+                except ValueError:
+                    pass
+
+                # Check for module as a package
+                potential_path = path_entry / module_name.replace('.', '/') / "__init__.py"
+                try:
+                    if potential_path.exists() and self.project_root in potential_path.parents and str(potential_path.relative_to(self.project_root)) in self.parsed_files:
+                        return str(potential_path.relative_to(self.project_root))
+                except ValueError:
+                    pass
 
         return None
 

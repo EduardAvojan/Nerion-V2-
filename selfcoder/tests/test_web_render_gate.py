@@ -1,5 +1,7 @@
 
 
+import sys
+
 import pytest
 
 from ops.security.net_gate import NetworkGate
@@ -60,6 +62,8 @@ def test_render_url_allowed_fetches(monkeypatch):
 
     monkeypatch.setattr(WR, "httpx", type("H", (), {"get": staticmethod(fake_httpx_get)}))
 
+    # Force the test to use the httpx fallback by making playwright fail to import
+    monkeypatch.setitem(sys.modules, "playwright", None)
     out = WR.render_url("https://example.com/page", render_timeout=1, http_timeout=1)
     assert isinstance(out, str)
     assert "OK" in out

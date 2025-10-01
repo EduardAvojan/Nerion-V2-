@@ -1,17 +1,16 @@
 {
-  "architecture": "gat",
+  "architecture": "gcn",
   "attention_heads": 4,
-  "best_epoch": 2,
-  "best_val_accuracy": 0.75,
-  "best_val_auc": 0.7794486215538847,
-  "best_val_f1": 0.7368421052631579,
-  "dropout": 0.3,
+  "best_epoch": 1,
+  "best_val_accuracy": 0.7,
+  "best_val_auc": 0.6,
+  "best_val_f1": 0.7692307692307693,
+  "dropout": 0.2,
   "hidden_channels": 256,
   "num_layers": 4,
   "num_node_features": 33,
-  "pooling": "sum",
-  "pretrained_source": "digital_physicist_pretrain.pt",
-  "residual": true,
-  "run_dir": "experiments/runs/gnn/20250929T024629Z",
-  "trained_at": "2025-09-29T02:46:29.984094+00:00"
+  "pooling": "mean",
+  "residual": false,
+  "run_dir": "out/learning/training_runs/latest_supervised/20250929T205449Z",
+  "trained_at": "2025-09-29T20:54:49.169961+00:00"
 }

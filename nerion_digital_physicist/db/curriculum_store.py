@@ -31,6 +31,12 @@ class CurriculumStore:
         """)
         self._conn.commit()
 
+    def lesson_exists(self, lesson_name: str) -> bool:
+        """Checks if a lesson with the given name already exists."""
+        cursor = self._conn.cursor()
+        cursor.execute("SELECT 1 FROM lessons WHERE name = ?", (lesson_name,))
+        return cursor.fetchone() is not None
+
     def add_lesson(self, lesson_data: Dict[str, Any]):
         """Adds a new lesson to the database."""
         cursor = self._conn.cursor()

@@ -86,6 +86,19 @@ def _offline_lesson_bundle(lesson_description: str, lesson_name: str) -> Dict[st
         "test_code": test_code,
     }
 
+
+def _normalise_redaction_placeholders(bundle: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure redaction placeholders cannot collide with original secret characters."""
+
+    replacement = "<<REDACTED>>"
+    for key in ("before_code", "after_code", "test_code"):
+        value = bundle.get(key)
+        if not isinstance(value, str):
+            continue
+        if "[REDACTED]" in value or "{REDACTED}" in value:
+            bundle[key] = value.replace("[REDACTED]", replacement).replace("{REDACTED}", replacement)
+    return bundle
+
 def _generate_lesson_from_llm(lesson_description: str, lesson_name: str) -> Optional[Dict[str, Any]]:
     """Uses an LLM to generate the code snippets for a new training lesson."""
     print("   - Generating code snippets from LLM...")
@@ -102,6 +115,12 @@ def _generate_lesson_from_llm(lesson_description: str, lesson_name: str) -> Opti
         "\n**Execution Context:** Your generated code will be run in a temporary sandbox. The `before_code` and `after_code` will each be saved to a file named `module.py`. "
         "Your `test_code` will be saved in `test_module.py` and should therefore import the code to be tested using `from module import ...`."
         "\nThe 'test_code' must be a valid pytest file that fails on 'before_code' and passes on 'after_code'."
+        "\nHypothesis is installed in this environment—prefer using Hypothesis for property-based tests rather than hand-rolled fuzzers."
+        "\nIf you include any randomized loops (for example, custom fuzzing) keep them lightweight (≤150 iterations) and avoid long shrink loops so the vetting run stays fast."
+        "\nWhen redacting secrets or sensitive values, use a placeholder that shares no characters with the original secret (e.g., '<<REDACTED>>'), so containment checks remain valid."
+        "\nWhen you use asyncio.TaskGroup (or any construct that raises ExceptionGroup), flatten the exception by catching `except* Exception` and re-raising the first inner exception so single-exception tests pass cleanly."
+        "\nWhen implementing retry/backoff helpers, ensure each retry actually sleeps once using a jitter-adjusted delay (e.g., call `random.uniform` and `time.sleep` before the next attempt)."
+        "\n**Hypothesis Health Checks:** If you write a test that uses both the `@given` decorator and a `pytest` fixture (like `monkeypatch`), you must add the `@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])` decorator to the test function to avoid a `FailedHealthCheck` error."
     )
     user_prompt = f"Create a training exercise for the following lesson: {lesson_description}"
 
@@ -113,7 +132,7 @@ def _generate_lesson_from_llm(lesson_description: str, lesson_name: str) -> Opti
         data = json.loads(response_json_str)
         data['name'] = lesson_name
         data['description'] = lesson_description
-        return data
+        return _normalise_redaction_placeholders(data)
     except Exception as e:
         print(f"   - Failed to generate or parse LLM response: {e}", file=sys.stderr)
         return _offline_lesson_bundle(lesson_description, lesson_name)
@@ -133,6 +152,11 @@ def _repair_lesson(lesson_description: str, lesson_name: str, failure_log: str) 
         "Your task is to analyze the failure and provide a corrected version. "
         "\n**Execution Context:** The code is run in a sandbox where the file to be tested is named `module.py`. Ensure your test code imports from `module`. "
         "Return a single JSON object with corrected 'before_code', 'after_code', and 'test_code' keys."
+        "\nHypothesis is available—use it for property-based checks whenever suitable."
+        "\nIf you must rely on custom randomized loops, cap them at 150 iterations and keep shrinking/diagnostic passes short so pytest completes quickly."
+        "\nWhen redacting secrets or sensitive values, replace them with a placeholder that uses entirely different characters (for example, '<<REDACTED>>') so containment assertions do not fail." 
+        "\nIf your fix involves asyncio.TaskGroup or ExceptionGroup, wrap the TaskGroup body in a `try` / `except* Exception` and re-raise the first inner exception to match tests that expect a single error." 
+        "\nFor retry/backoff functions, make sure the jitter function is invoked and the code sleeps at least once before retrying so tests that count jitter usage succeed." 
     )
     user_prompt = (
         f"The original lesson description was: {lesson_description}\n\n"
@@ -148,7 +172,7 @@ def _repair_lesson(lesson_description: str, lesson_name: str, failure_log: str) 
         data = json.loads(response_json_str)
         data['name'] = lesson_name
         data['description'] = lesson_description
-        return data
+        return _normalise_redaction_placeholders(data)
     except Exception as e:
         print(f"   - Failed to generate or parse LLM response for repair: {e}", file=sys.stderr)
         return _offline_lesson_bundle(lesson_description, lesson_name)

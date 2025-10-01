@@ -73,6 +73,7 @@ class AgentV2:
         adaptive_epsilon: bool = False,
         entropy_bonus: float = 0.0,
         embedder: Optional[SemanticEmbedder] = None,
+        num_mc_passes: int = 10,
     ):
         if input_dim is None:
             raise ValueError("AgentV2 requires a specific `input_dim`.")
@@ -97,7 +98,33 @@ class AgentV2:
         self.adaptive_surprise_target = max(0.0, float(adaptive_surprise_target))
         self.adaptive_epsilon = bool(adaptive_epsilon)
         self.entropy_bonus = float(entropy_bonus)
+        self.num_mc_passes = num_mc_passes
         self._checkpoint_metadata: dict[str, Any] = {}
+
+    def predict_with_uncertainty(self, graph_data: Data, node_map: Dict[int, Dict], action: RenameAction) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Predicts the outcome of an action and estimates the model's uncertainty.
+        Returns tensors for mean prediction and uncertainty.
+        """
+        predictions = []
+        target_node_idx = self._find_node_index(action, node_map)
+        if target_node_idx is None:
+            # Return tensors to maintain type consistency
+            return torch.tensor(0.0), torch.tensor(0.0)
+
+        for _ in range(self.num_mc_passes):
+            action_feature = torch.zeros(graph_data.num_nodes, 1)
+            action_feature[target_node_idx] = 1.0
+            augmented_x = torch.cat([graph_data.x, action_feature], dim=1)
+
+            prediction_logits = self.brain(augmented_x, graph_data.edge_index, graph_data.batch, use_dropout=True)
+            logit_for_action = prediction_logits[target_node_idx]
+            predictions.append(torch.sigmoid(logit_for_action))
+
+        predictions_tensor = torch.stack(predictions)
+        mean_prediction = predictions_tensor.mean()
+        uncertainty = predictions_tensor.var()
+        return mean_prediction, uncertainty
 
     def learn(
         self, 
@@ -112,17 +139,7 @@ class AgentV2:
         self.optimizer.zero_grad()
 
         for action, outcome in experiences:
-            target_node_idx = self._find_node_index(action, node_map)
-            if target_node_idx is None:
-                print(f"Warning: Could not find node for action {action}. Skipping experience.")
-                continue
-
-            action_feature = torch.zeros(graph_data.num_nodes, 1)
-            action_feature[target_node_idx] = 1.0
-            augmented_x = torch.cat([graph_data.x, action_feature], dim=1)
-
-            prediction_logits = self.brain(augmented_x, graph_data.edge_index, graph_data.batch)
-            logit_for_action = prediction_logits[target_node_idx]
+            mean_prediction, uncertainty = self.predict_with_uncertainty(graph_data, node_map, action)
 
             # Calculate a continuous success score (0.0 to 1.0)
             total_tests = outcome.passed + outcome.failed + outcome.errored
@@ -130,9 +147,13 @@ class AgentV2:
                 success_score = 0.0 # Or 1.0, depending on desired behavior for no tests
             else:
                 success_score = outcome.passed / total_tests
-            
+
+            prediction_error = abs(mean_prediction.item() - success_score)
+            surprise = prediction_error / (uncertainty.item() + 1e-6)
+            self._update_adaptive_parameters(surprise)
+
             target = torch.tensor([success_score])
-            loss = self.criterion(logit_for_action, target)
+            loss = self.criterion(mean_prediction, target)
             total_loss += loss.item()
 
             loss.backward()
@@ -152,12 +173,6 @@ class AgentV2:
             if file_path == action.file_path and node_info.get("name") == action.old_name:
                 return idx
         return None
-
-    @property
-    def source_path(self) -> Path:
-        """Return the path to the environment source file."""
-
-        return self._logic_path
 
     def _update_adaptive_parameters(self, surprise: float) -> float:
         """Optionally adjust epsilon based on surprise observations."""

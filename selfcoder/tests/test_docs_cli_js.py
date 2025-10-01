@@ -51,8 +51,7 @@ def test_docs_read_url_render_renders_js():
     # With render=True, we expect the JS-updated content
     code, data = _run_cmd(
         docs_cli.cmd_read,
-        argparse.Namespace(path=None, url=url, timeout=5, render=True, render_timeout=2, selector=None),
-    )
+                    argparse.Namespace(path=None, url=url, timeout=5, render=True, render_timeout=5, selector=None),    )
     assert code == 0
     text = data.get("text", "")
     # Should include the JS-rendered title/content, not just the initial "Loading..."

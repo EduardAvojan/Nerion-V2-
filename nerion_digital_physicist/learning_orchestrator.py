@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from app.parent.coder import Coder
 from selfcoder.policy.meta_policy_evaluator import MetaPolicyEvaluator
+from nerion_digital_physicist.db.curriculum_store import CurriculumStore
 
 
 def _load_environment() -> None:
@@ -62,12 +63,12 @@ class LearningOrchestrator:
             print(f"[Inspiration] Meta-Policy selected strategic focus: {focus}")
         return focus
 
-    def _generate_idea(self, inspiration: str) -> Optional[Dict[str, Any]]:
+    def _generate_idea(self, inspiration: str, provider: str | None = None) -> Optional[Dict[str, Any]]:
         """Generates a specific lesson idea based on the inspiration source."""
         print(f"[Idea Generation] Generating concept based on: {inspiration}")
         
         try:
-            llm = Coder(role='planner')
+            llm = Coder(role='planner', provider_override=provider)
         except Exception as e:
             print(f"  - ERROR: Could not get LLM provider: {e}")
             return None
@@ -103,12 +104,12 @@ class LearningOrchestrator:
         print(f"  - Generated idea: {idea['name']}")
         return idea
 
-    def _assess_impact(self, idea: Dict[str, Any]) -> Tuple[bool, str]:
+    def _assess_impact(self, idea: Dict[str, Any], provider: str | None = None) -> Tuple[bool, str]:
         """Acts as the 'Critic' to evaluate the potential impact of a lesson idea."""
         print(f"[Impact Assessment] Critic is evaluating idea: {idea['name']}")
         
         try:
-            llm = Coder(role='planner')
+            llm = Coder(role='planner', provider_override=provider)
         except Exception as e:
             print(f"  - ERROR: Could not get LLM provider for Critic: {e}")
             return False, "Could not instantiate Critic LLM."
@@ -173,6 +174,16 @@ class LearningOrchestrator:
         print(f"  - Offline critic heuristic scores: {scores}")
         return True, "Idea approved by offline critic heuristic."
 
+    def _is_duplicate(self, lesson_name: str) -> bool:
+        """Checks if a lesson with the given name already exists in the database."""
+        db_path = Path("out/learning/curriculum.sqlite")
+        if not db_path.exists():
+            return False
+        store = CurriculumStore(db_path)
+        exists = store.lesson_exists(lesson_name)
+        store.close()
+        return exists
+
     def _trigger_curriculum_generation(self, idea: Dict[str, Any]):
         """Calls the curriculum generator script for a validated idea."""
         print(f"[Curriculum Generation] Triggering generator for: {idea['name']}")
@@ -197,7 +208,7 @@ class LearningOrchestrator:
             print(e.stderr)
             print("-------------------------------")
 
-    def run_cycle(self):
+    def run_cycle(self, provider: str | None = None):
         """Runs one full autonomous learning cycle."""
         print("--- Starting Autonomous Learning Cycle ---")
         
@@ -208,13 +219,13 @@ class LearningOrchestrator:
             return
         
         # 2. Idea Generation
-        idea = self._generate_idea(inspiration)
+        idea = self._generate_idea(inspiration, provider=provider)
         if not idea:
             print("[Orchestrator] Failed to generate a new idea. Halting cycle.")
             return
 
         # 3. Impact Assessment (The Critic)
-        is_viable, reason = self._assess_impact(idea)
+        is_viable, reason = self._assess_impact(idea, provider=provider)
         if not is_viable:
             print(f"[Orchestrator] Discarding idea: {reason}. Halting cycle.")
             return
@@ -227,12 +238,22 @@ class LearningOrchestrator:
             return
         print("[Orchestrator] Idea approved by Meta-Policy.")
 
-        # 5. Trigger the curriculum generation process.
+        # 5. Check for duplicates before generating
+        if self._is_duplicate(idea['name']):
+            print(f"[Orchestrator] Lesson '{idea['name']}' already exists. Halting cycle.")
+            return
+
+        # 6. Trigger the curriculum generation process.
         self._trigger_curriculum_generation(idea)
         
         print("--- Autonomous Learning Cycle Complete ---")
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Autonomous Learning Cycle for the Digital Physicist.")
+    parser.add_argument("--provider", type=str, default=None, help="LLM provider to use (e.g., 'openai' or 'gemini')")
+    args = parser.parse_args()
+
     orchestrator = LearningOrchestrator()
-    orchestrator.run_cycle()
+    orchestrator.run_cycle(provider=args.provider)
