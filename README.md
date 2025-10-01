@@ -1,5 +1,11 @@
 # Nerion V2: The Self-Improving Developer Agent
 
+> For complete and detailed documentation, please visit the [documentation](./documentation/README.md) directory.
+
+
+> For complete and detailed documentation, please visit the [documentation](./documentation/README.md) directory.
+
+
 Nerion V2 is a professional-grade, open-source platform that unites a voice-first assistant with a self-improving software engineer. It keeps the agent, planner, and safety loops on your local machine while delegating language generation to the API providers you configure.
 
 ## Core Architecture: A Two-Tiered Mind
