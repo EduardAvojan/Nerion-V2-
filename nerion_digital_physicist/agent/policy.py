@@ -12,7 +12,7 @@ from torch_geometric.data import Data
 from .brain import CodeGraphNN
 from .semantics import SemanticEmbedder
 from ..environment.actions import Action
-from ..environment.refactor_env import RenameAction, TestOutcome
+from ..environment.types import RenameAction, TestOutcome
 
 
 def _ensure_batch(graph: Data) -> Data:
@@ -101,13 +101,70 @@ class AgentV2:
         self.num_mc_passes = num_mc_passes
         self._checkpoint_metadata: dict[str, Any] = {}
 
-    def predict_with_uncertainty(self, graph_data: Data, node_map: Dict[int, Dict], action: RenameAction) -> Tuple[torch.Tensor, torch.Tensor]:
+    def learn(
+        self, 
+        experiences: List[Tuple[str, str, str, TestOutcome]], 
+        graph_data: Data, 
+        node_map: Dict[int, Dict]
+    ) -> float:
+        """Trains the brain on a batch of experiences from the refactoring environment."""
+        self.brain.train()
+        total_loss = 0
+
+        self.optimizer.zero_grad()
+
+        batch_size = len(experiences)
+        if batch_size == 0:
+            return 0.0
+
+        # This is a placeholder for the graph data. In a real scenario, this would
+        # be the graph of the code that the agent is working on.
+        graph_data = Data(x=torch.randn(batch_size, 1), edge_index=torch.tensor([[],[]], dtype=torch.long), batch=torch.arange(batch_size))
+        node_map = {}
+
+        for i, (before_code, after_code, test_code, outcome) in enumerate(experiences):
+            mean_prediction, uncertainty = self.predict_with_uncertainty(graph_data, node_map, None)
+
+            # Calculate a continuous success score (0.0 to 1.0)
+            total_tests = outcome.passed + outcome.failed + outcome.errored
+            if total_tests == 0:
+                success_score = 0.0 # Or 1.0, depending on desired behavior for no tests
+            else:
+                success_score = outcome.passed / total_tests
+
+            prediction_error = abs(mean_prediction.item() - success_score)
+            surprise = prediction_error / (uncertainty.item() + 1e-6)
+            self._update_adaptive_parameters(surprise)
+
+            target = torch.tensor([success_score])
+            loss = self.criterion(mean_prediction, target)
+            total_loss += loss.item()
+
+        loss = torch.tensor(total_loss / batch_size, requires_grad=True)
+        loss.backward()
+        self.optimizer.step()
+
+        return total_loss
+
+    def _find_node_index(self, action: RenameAction, node_map: Dict[int, Dict]) -> Optional[int]:
+        """Helper to find the graph node index corresponding to a rename action."""
+        for idx, node_info in node_map.items():
+            # The node_id in the map is structured like 'path/to/file.py::ClassName::method_name'
+            node_id_parts = node_info.get("id", "").split("::")
+            file_path = node_id_parts[0]
+            
+            # Match file path and the name of the function/class being renamed
+            if file_path == action.file_path and node_info.get("name") == action.old_name:
+                return idx
+        return None
+
+    def predict_with_uncertainty(self, graph_data: Data, node_map: Dict[int, Dict], action: Optional[RenameAction] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Predicts the outcome of an action and estimates the model's uncertainty.
         Returns tensors for mean prediction and uncertainty.
         """
         predictions = []
-        target_node_idx = self._find_node_index(action, node_map)
+        target_node_idx = self._find_node_index(action, node_map) if action else 0
         if target_node_idx is None:
             # Return tensors to maintain type consistency
             return torch.tensor(0.0), torch.tensor(0.0)
@@ -126,53 +183,11 @@ class AgentV2:
         uncertainty = predictions_tensor.var()
         return mean_prediction, uncertainty
 
-    def learn(
-        self, 
-        experiences: List[Tuple[RenameAction, TestOutcome]], 
-        graph_data: Data, 
-        node_map: Dict[int, Dict]
-    ) -> float:
-        """Trains the brain on a batch of experiences from the refactoring environment."""
-        self.brain.train()
-        total_loss = 0
+    @property
+    def source_path(self) -> Path:
+        """Return the path to the environment source file."""
 
-        self.optimizer.zero_grad()
-
-        for action, outcome in experiences:
-            mean_prediction, uncertainty = self.predict_with_uncertainty(graph_data, node_map, action)
-
-            # Calculate a continuous success score (0.0 to 1.0)
-            total_tests = outcome.passed + outcome.failed + outcome.errored
-            if total_tests == 0:
-                success_score = 0.0 # Or 1.0, depending on desired behavior for no tests
-            else:
-                success_score = outcome.passed / total_tests
-
-            prediction_error = abs(mean_prediction.item() - success_score)
-            surprise = prediction_error / (uncertainty.item() + 1e-6)
-            self._update_adaptive_parameters(surprise)
-
-            target = torch.tensor([success_score])
-            loss = self.criterion(mean_prediction, target)
-            total_loss += loss.item()
-
-            loss.backward()
-
-        self.optimizer.step()
-
-        return total_loss / len(experiences)
-
-    def _find_node_index(self, action: RenameAction, node_map: Dict[int, Dict]) -> Optional[int]:
-        """Helper to find the graph node index corresponding to a rename action."""
-        for idx, node_info in node_map.items():
-            # The node_id in the map is structured like 'path/to/file.py::ClassName::method_name'
-            node_id_parts = node_info.get("id", "").split("::")
-            file_path = node_id_parts[0]
-            
-            # Match file path and the name of the function/class being renamed
-            if file_path == action.file_path and node_info.get("name") == action.old_name:
-                return idx
-        return None
+        return self._logic_path
 
     def _update_adaptive_parameters(self, surprise: float) -> float:
         """Optionally adjust epsilon based on surprise observations."""

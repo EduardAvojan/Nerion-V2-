@@ -1,5 +1,3 @@
-
-
 import sys
 
 import pytest
@@ -64,6 +62,7 @@ def test_render_url_allowed_fetches(monkeypatch):
 
     # Force the test to use the httpx fallback by making playwright fail to import
     monkeypatch.setitem(sys.modules, "playwright", None)
+
     out = WR.render_url("https://example.com/page", render_timeout=1, http_timeout=1)
     assert isinstance(out, str)
     assert "OK" in out

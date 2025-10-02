@@ -225,6 +225,7 @@ def read_doc(
     render_timeout: int = 12,
     selector: Optional[str] = None,
 ) -> Dict[str, Any]:
+    render_fallback = False
     if (path is None) == (url is None):
         raise ValueError("Provide exactly one of `path` or `url`.")
 
@@ -261,34 +262,36 @@ def read_doc(
             "domain_confidence": dconf,
         }
     elif url is not None:
-        # Enforce global network gate for library callers as well
-        if not allow_network():
-            raise RuntimeError("network disabled by configuration (NERION_ALLOW_NETWORK)")
-        if render:
-            try:
-                from selfcoder.analysis import web_render
-            except Exception as e:
-                raise RuntimeError(
-                    "JS rendering requires the web extras. Install: `pip install -e '.[docs-web]'` and run `playwright install chromium`."
-                ) from e
-            try:
-                html = web_render.render_url(url, timeout=timeout, render_timeout=render_timeout, selector=selector)
-                text = _postprocess_text(web_render.extract_main_text(html))
-                raw = html
-                render_fallback = False
-            except Exception:
-                # Playwright or render failed — fall back to plain HTTP fetch
-                raw = _fetch_url(url, timeout=timeout)
-                stripper = _HTMLStripper()
-                stripper.feed(raw)
-                text = _postprocess_text(stripper.get_text())
-                render_fallback = True
+        if url.startswith("file://"):
+            path = Path(url[7:])
+            raw = path.read_text(encoding="utf-8", errors="ignore")
+            text = raw
         else:
-            raw = _fetch_url(url, timeout=timeout)
+            # Enforce global network gate for library callers as well
+            if not allow_network():
+                raise RuntimeError("network disabled by configuration (NERION_ALLOW_NETWORK)")
+            if render:
+                try:
+                    from selfcoder.analysis import web_render
+                except Exception as e:
+                    raise RuntimeError(
+                        "JS rendering requires the web extras. Install: `pip install -e '.[docs-web]'` and run `playwright install chromium`."
+                    ) from e
+                try:
+                    html = web_render.render_url(url, timeout=timeout, render_timeout=render_timeout, selector=selector)
+                except PermissionError as e:
+                    # Fallback to plain HTTP if rendering is blocked by policy
+                    print(f"[docs] JS render blocked by policy: {e}. Falling back to static fetch.", file=sys.stderr)
+                    raw = _fetch_url(url, timeout=timeout)
+                    html = raw
+            else:
+                raw = _fetch_url(url, timeout=timeout)
+                html = raw
+
             stripper = _HTMLStripper()
-            stripper.feed(raw)
+            stripper.feed(html)
             text = _postprocess_text(stripper.get_text())
-            render_fallback = False
+            raw = html
         dom, dconf = classify_query(query or "", url=url)
         out = {
             "url": url,

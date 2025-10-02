@@ -1,9 +1,8 @@
-"""
-Automation harness for training the GNN on project-wide refactoring tasks.
-"""
+"Automation harness for training the GNN on project-wide refactoring tasks."
 from __future__ import annotations
 
 import random
+import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -16,30 +15,16 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from dataclasses import asdict
 
-from nerion_digital_physicist.agent.project_graph import ProjectParser, to_pyg_data
-from nerion_digital_physicist.environment.refactor_env import RefactorEnvironment, RenameAction, TestOutcome
+from nerion_digital_physicist.generation.curriculum_generator import _run_test_in_sandbox
 from nerion_digital_physicist.agent.policy import AgentV2
 from nerion_digital_physicist.infrastructure.memory import ReplayStore
 from nerion_digital_physicist.infrastructure.telemetry import TelemetryLogger
 from nerion_digital_physicist.infrastructure.outcomes import log_outcome
-
-from nerion_digital_physicist.infrastructure.knowledge_graph import KnowledgeGraph
+from nerion_digital_physicist.environment.types import TestOutcome
 
 # Type alias for experience tuples
-Experience = Tuple[RenameAction, TestOutcome]
+Experience = Tuple[str, str, str, TestOutcome]
 
-
-def find_node_index(action: RenameAction, node_map: Dict[int, Dict]) -> Optional[int]:
-    """Find the graph node index corresponding to a rename action."""
-    for idx, node_info in node_map.items():
-        # The node_id in the map is structured like 'path/to/file.py::ClassName::method_name'
-        node_id_parts = node_info.get("id", "").split("::")
-        file_path = node_id_parts[0]
-        
-        # Match file path and the name of the function/class being renamed
-        if file_path == action.file_path and node_info.get("name") == action.old_name:
-            return idx
-    return None
 
 def train_agent(agent: AgentV2, replay_store: ReplayStore, graph_data: Data, node_map: Dict[int, Dict], batch_size: int):
     """Samples experiences and trains the agent."""
@@ -51,7 +36,14 @@ def train_agent(agent: AgentV2, replay_store: ReplayStore, graph_data: Data, nod
     experiences = replay_store.sample(batch_size)
     
     # Unpack the Experience objects into the format expected by the agent
-    training_data = [(RenameAction(**exp.metadata['action']), TestOutcome(**exp.metadata['outcome'])) for exp in experiences]
+    training_data = []
+    for exp in experiences:
+        training_data.append((
+            exp.metadata['before_code'], 
+            exp.metadata['after_code'], 
+            exp.metadata['test_code'], 
+            TestOutcome(**exp.metadata['outcome'])
+        ))
     
     # We will pass the full batch to the agent to process
     # The agent's `learn` method will be responsible for iterating and calculating loss
@@ -62,91 +54,63 @@ def train_agent(agent: AgentV2, replay_store: ReplayStore, graph_data: Data, nod
 def main():
     """Main training loop for the refactoring task."""
     # --- Config ---
-    NUM_EPISODES = 1
+    NUM_EPISODES = 10
     BATCH_SIZE = 3
     REPLAY_ROOT = Path("out/training_runs/replay")
-    KG_PATH = Path("out/training_runs/knowledge_graph.graphml")
-    CACHE_PATH = Path("project_graph_cache.pt")
+    DB_PATH = Path("out/learning/curriculum.sqlite")
 
-    # --- Graph Loading/Building ---
-    print("1. Building project graph...")
-    parser = ProjectParser(".")
-    parser.discover_and_parse()
-    graph = parser.build_graph()
-    pyg_data, node_map = to_pyg_data(graph, parser)
-    print("Project graph built successfully.")
+    # Clear the replay file
+    if (REPLAY_ROOT / "replay.jsonl").exists():
+        (REPLAY_ROOT / "replay.jsonl").unlink()
 
-    if KG_PATH.exists():
-        print(f"Loading knowledge graph from {KG_PATH}...")
-        kg = KnowledgeGraph.load(KG_PATH)
-    else:
-        print("Creating new knowledge graph...")
-        kg = KnowledgeGraph(graph)
+    # --- Load Lessons from DB ---
+    print(f"Loading lessons from {DB_PATH}...")
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    cur.execute("SELECT * FROM lessons")
+    lessons = cur.fetchall()
+    con.close()
+    print(f"Loaded {len(lessons)} lessons.")
 
-    print("\n--- KNOWLEDGE GRAPH DEBUG ---")
-    print(f"Nodes: {kg.graph.nodes(data=True)}")
-    print(f"Edges: {kg.graph.edges(data=True)}")
-    print("---------------------------")
-
-    environment = RefactorEnvironment(".", knowledge_graph=kg)
+    print("\n2. Initializing environment, memory, and agent...")
     replay_store = ReplayStore(REPLAY_ROOT)
     telemetry = TelemetryLogger(REPLAY_ROOT)
     
-    num_features = pyg_data.x.shape[1] + 1
-    agent = AgentV2(input_dim=num_features)
-    print(f"Agent initialized for {num_features}-dimensional feature space.")
+    # This is a placeholder for the graph data. In a real scenario, this would
+    # be the graph of the code that the agent is working on.
+    graph_data = Data(x=torch.randn(2, 1), edge_index=torch.tensor([[0, 1],[1, 0]], dtype=torch.long), batch=torch.tensor([0, 1], dtype=torch.long))
+    node_map = {}
 
-    # A predefined list of refactoring tasks to attempt
-    tasks = [
-        # This is a known-good rename that should succeed
-        RenameAction(
-            file_path="nerion_digital_physicist/agent/brain.py",
-            old_name="CodeGraphNN",
-            new_name="GraphBrain",
-        ),
-        RenameAction(
-            file_path="selfcoder/planner/planner.py",
-            old_name="plan_edits_from_nl",
-            new_name="plan_edits_from_natural_language",
-        ),
-        RenameAction(
-            file_path="selfcoder/vcs/git_ops.py",
-            old_name="should_skip",
-            new_name="should_ignore_path",
-        ),
-        # This one is expected to fail tests, providing a good negative example
-        RenameAction(
-            file_path="nerion_digital_physicist/agent/brain.py",
-            old_name="CodeGraphNN",
-            new_name="GraphBrain",
-        ),
-    ]
+    agent = AgentV2(input_dim=2)
+    print(f"Agent initialized.")
 
     print(f"\n3. Gathering {NUM_EPISODES} experiences...")
     for i in range(NUM_EPISODES):
         print(f"\n--- Episode {i + 1}/{NUM_EPISODES} ---")
-        action = random.choice(tasks)
-        print(f"Selected Action: Rename '{action.old_name}' to '{action.new_name}' in {action.file_path}")
+        lesson = random.choice(lessons)
+        before_code = lesson["before_code"]
+        after_code = lesson["after_code"]
+        test_code = lesson["test_code"]
 
-        outcome = environment.step(action)
-        
-        mean_prediction, uncertainty = agent.predict_with_uncertainty(pyg_data, node_map, action)
-        
-        total_tests = outcome.passed + outcome.failed + outcome.errored
-        if total_tests == 0:
-            success_score = 0.0
-        else:
-            success_score = outcome.passed / total_tests
-            
-        prediction_error = abs(mean_prediction.item() - success_score)
-        surprise = prediction_error / (uncertainty.item() + 1e-6)
+        before_proc = _run_test_in_sandbox(before_code, test_code)
+        after_proc = _run_test_in_sandbox(after_code, test_code)
+
+        outcome = TestOutcome(
+            passed=1 if after_proc.returncode == 0 else 0,
+            failed=1 if after_proc.returncode != 0 else 0,
+        )
+
+        # This is a placeholder for the surprise calculation. In a real scenario, this
+        # would use the agent's model to predict the outcome and calculate the surprise.
+        surprise = random.random()
         
         experience = replay_store.append(
-            task_id=f"refactor_{i}",
-            template_id="refactoring",
+            task_id=lesson["name"],
+            template_id="lesson",
             status="solved" if outcome.was_successful else "failed",
             surprise=surprise,
-            metadata={"action": asdict(action), "outcome": asdict(outcome)}
+            metadata={"before_code": before_code, "after_code": after_code, "test_code": test_code, "outcome": asdict(outcome)}
         )
         
         log_outcome(
@@ -157,39 +121,12 @@ def main():
             surprise=surprise,
         )
 
-        # Update knowledge graph
-        action_id = f"action_{i}"
-        outcome_id = f"outcome_{i}"
-        file_id = action.file_path
-
-        kg.add_node(file_id, node_type="CodeFile", path=file_id)
-        kg.add_node(action_id, node_type="RefactoringAction", **asdict(action))
-        kg.add_node(outcome_id, node_type="TestOutcome", **asdict(outcome))
-
-        kg.add_edge(action_id, file_id, edge_type="MODIFIES")
-        kg.add_edge(action_id, outcome_id, edge_type="HAS_OUTCOME")
-
-        target_node_idx = find_node_index(action, node_map)
-        if target_node_idx is not None:
-            target_node_id = node_map[target_node_idx]["id"]
-            if "::" in target_node_id:
-                function_name = target_node_id.split("::")[-1]
-                kg.add_node(target_node_id, node_type="Function", name=function_name)
-                kg.add_edge(file_id, target_node_id, edge_type="CONTAINS")
-            else:
-                kg.add_node(target_node_id, node_type="CodeFile", path=target_node_id)
-            kg.add_edge(action_id, target_node_id, edge_type="MODIFIES")
-
         print(f"Episode Complete. Outcome: {'Success' if outcome.was_successful else 'Failure'} {outcome}. Surprise: {surprise:.4f}. Memory size: {len(list(replay_store.load()))}")
 
     print("\nExperience gathering finished.")
 
     # --- Training Phase ---
-    train_agent(agent, replay_store, pyg_data, node_map, BATCH_SIZE)
-
-    # --- Save Knowledge Graph ---
-    print(f"\nSaving knowledge graph to {KG_PATH}...")
-    kg.save(KG_PATH)
+    train_agent(agent, replay_store, graph_data, node_map, BATCH_SIZE)
 
 
 if __name__ == "__main__":
