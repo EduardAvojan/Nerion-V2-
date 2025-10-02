@@ -54,7 +54,7 @@ class _StackedGraphModel(nn.Module):
             nn.Linear(hidden_channels, num_classes),
         )
 
-    def forward(self, x, edge_index, batch):  # noqa: D401 - PyG style signature
+    def forward(self, x, edge_index, batch, *, use_dropout: bool = False):  # noqa: D401 - PyG style signature
         features = x
         for idx, conv in enumerate(self.layers):
             out = conv(features, edge_index)
@@ -63,7 +63,8 @@ class _StackedGraphModel(nn.Module):
             out = F.relu(out)
             if self.residual and out.shape == features.shape:
                 out = out + features
-            out = F.dropout(out, p=self.dropout, training=self.training)
+            # The `use_dropout` flag allows forcing dropout even in eval mode.
+            out = F.dropout(out, p=self.dropout, training=self.training or use_dropout)
             features = out
         return self.head(features)
 

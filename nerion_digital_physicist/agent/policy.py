@@ -12,7 +12,7 @@ from torch_geometric.data import Data
 from .brain import CodeGraphNN
 from .semantics import SemanticEmbedder
 from ..environment.actions import Action
-from ..environment.refactor_env import RenameAction, TestOutcome
+from ..environment.types import RenameAction, TestOutcome
 
 
 def _ensure_batch(graph: Data) -> Data:
@@ -73,6 +73,7 @@ class AgentV2:
         adaptive_epsilon: bool = False,
         entropy_bonus: float = 0.0,
         embedder: Optional[SemanticEmbedder] = None,
+        num_mc_passes: int = 10,
     ):
         if input_dim is None:
             raise ValueError("AgentV2 requires a specific `input_dim`.")
@@ -97,11 +98,12 @@ class AgentV2:
         self.adaptive_surprise_target = max(0.0, float(adaptive_surprise_target))
         self.adaptive_epsilon = bool(adaptive_epsilon)
         self.entropy_bonus = float(entropy_bonus)
+        self.num_mc_passes = num_mc_passes
         self._checkpoint_metadata: dict[str, Any] = {}
 
     def learn(
         self, 
-        experiences: List[Tuple[RenameAction, TestOutcome]], 
+        experiences: List[Tuple[str, str, str, TestOutcome]], 
         graph_data: Data, 
         node_map: Dict[int, Dict]
     ) -> float:
@@ -111,18 +113,17 @@ class AgentV2:
 
         self.optimizer.zero_grad()
 
-        for action, outcome in experiences:
-            target_node_idx = self._find_node_index(action, node_map)
-            if target_node_idx is None:
-                print(f"Warning: Could not find node for action {action}. Skipping experience.")
-                continue
+        batch_size = len(experiences)
+        if batch_size == 0:
+            return 0.0
 
-            action_feature = torch.zeros(graph_data.num_nodes, 1)
-            action_feature[target_node_idx] = 1.0
-            augmented_x = torch.cat([graph_data.x, action_feature], dim=1)
+        # This is a placeholder for the graph data. In a real scenario, this would
+        # be the graph of the code that the agent is working on.
+        graph_data = Data(x=torch.randn(batch_size, 1), edge_index=torch.tensor([[],[]], dtype=torch.long), batch=torch.arange(batch_size))
+        node_map = {}
 
-            prediction_logits = self.brain(augmented_x, graph_data.edge_index, graph_data.batch)
-            logit_for_action = prediction_logits[target_node_idx]
+        for i, (before_code, after_code, test_code, outcome) in enumerate(experiences):
+            mean_prediction, uncertainty = self.predict_with_uncertainty(graph_data, node_map, None)
 
             # Calculate a continuous success score (0.0 to 1.0)
             total_tests = outcome.passed + outcome.failed + outcome.errored
@@ -130,16 +131,20 @@ class AgentV2:
                 success_score = 0.0 # Or 1.0, depending on desired behavior for no tests
             else:
                 success_score = outcome.passed / total_tests
-            
+
+            prediction_error = abs(mean_prediction.item() - success_score)
+            surprise = prediction_error / (uncertainty.item() + 1e-6)
+            self._update_adaptive_parameters(surprise)
+
             target = torch.tensor([success_score])
-            loss = self.criterion(logit_for_action, target)
+            loss = self.criterion(mean_prediction, target)
             total_loss += loss.item()
 
-            loss.backward()
-
+        loss = torch.tensor(total_loss / batch_size, requires_grad=True)
+        loss.backward()
         self.optimizer.step()
 
-        return total_loss / len(experiences)
+        return total_loss
 
     def _find_node_index(self, action: RenameAction, node_map: Dict[int, Dict]) -> Optional[int]:
         """Helper to find the graph node index corresponding to a rename action."""
@@ -152,6 +157,31 @@ class AgentV2:
             if file_path == action.file_path and node_info.get("name") == action.old_name:
                 return idx
         return None
+
+    def predict_with_uncertainty(self, graph_data: Data, node_map: Dict[int, Dict], action: Optional[RenameAction] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Predicts the outcome of an action and estimates the model's uncertainty.
+        Returns tensors for mean prediction and uncertainty.
+        """
+        predictions = []
+        target_node_idx = self._find_node_index(action, node_map) if action else 0
+        if target_node_idx is None:
+            # Return tensors to maintain type consistency
+            return torch.tensor(0.0), torch.tensor(0.0)
+
+        for _ in range(self.num_mc_passes):
+            action_feature = torch.zeros(graph_data.num_nodes, 1)
+            action_feature[target_node_idx] = 1.0
+            augmented_x = torch.cat([graph_data.x, action_feature], dim=1)
+
+            prediction_logits = self.brain(augmented_x, graph_data.edge_index, graph_data.batch, use_dropout=True)
+            logit_for_action = prediction_logits[target_node_idx]
+            predictions.append(torch.sigmoid(logit_for_action))
+
+        predictions_tensor = torch.stack(predictions)
+        mean_prediction = predictions_tensor.mean()
+        uncertainty = predictions_tensor.var()
+        return mean_prediction, uncertainty
 
     @property
     def source_path(self) -> Path:

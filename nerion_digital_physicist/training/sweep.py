@@ -50,7 +50,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("experiments/runs/gnn_sweeps"),
+        default=Path("out/training_runs/sweeps"),
         help="Where sweep run artefacts are written",
     )
     parser.add_argument(

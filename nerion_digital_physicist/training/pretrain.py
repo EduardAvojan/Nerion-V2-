@@ -184,7 +184,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("experiments/runs/gnn_pretrain"),
+        default=Path("out/training_runs/pretrain"),
         help="Directory where pretraining artefacts will be stored",
     )
     parser.add_argument("--epochs", type=int, default=40)

@@ -11,7 +11,7 @@ def test_semantic_features_dimension(tmp_path):
     repo_root = Path(__file__).resolve().parents[2]
     file_path = repo_root / "nerion_digital_physicist" / "environment" / "logic_v2.py"
     graph = create_graph_data_object(file_path, embedder=embedder)
-    assert graph.x.shape[1] == 7 + DEFAULT_DIMENSION
+    assert graph.x.shape[1] == 17 + DEFAULT_DIMENSION
     assert isinstance(graph.x, torch.Tensor)
 
 

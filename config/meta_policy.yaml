@@ -18,6 +18,9 @@ strategic_directives:
   CURRENT_FOCUS: 
     - "Security"
     - "Reliability"
+    - "Performance"
+    - "Maintainability"
+    - "Correctness"
 
   # The agent will not generate lessons for topics in this list.
   AVOID_TOPICS:

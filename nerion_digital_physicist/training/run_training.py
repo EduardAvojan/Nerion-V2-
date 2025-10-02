@@ -232,6 +232,11 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
     pool_fn = _select_pooling(config.pooling)
 
     history = []
+    best_snapshot: dict[str, object] | None = None
+    best_val_metric = float("-inf")
+    epochs_since_improvement = 0
+    patience = max(5, int(config.epochs * 0.1))
+
     for epoch in range(1, config.epochs + 1):
         train_loss, train_acc, _ = _run_epoch(model, train_loader, pool_fn, optimizer)
         val_loss, val_acc, val_metrics = _run_epoch(model, val_loader, pool_fn)
@@ -254,7 +259,33 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
                 f"val_f1={val_metrics.get('f1', float('nan')):.3f}"
             )
 
-    best_epoch = max(history, key=lambda item: item["val_accuracy"])
+        current_val_metric = val_acc
+        if current_val_metric > best_val_metric:
+            best_val_metric = current_val_metric
+            best_snapshot = {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "train_accuracy": train_acc,
+                "val_loss": val_loss,
+                "val_accuracy": val_acc,
+                "val_auc": val_metrics.get("auc"),
+                "val_f1": val_metrics.get("f1"),
+                "state_dict": {k: v.detach().cpu().clone() for k, v in model.state_dict().items()},
+            }
+            epochs_since_improvement = 0
+        else:
+            epochs_since_improvement += 1
+
+        if epochs_since_improvement >= patience:
+            print(
+                "Early stopping triggered: no validation improvement for "
+                f"{epochs_since_improvement} epochs (patience={patience})."
+            )
+            break
+
+    assert best_snapshot is not None
+    model.load_state_dict(best_snapshot.pop("state_dict"))
+    best_epoch = best_snapshot
 
     return {
         "model": model,
@@ -289,7 +320,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("experiments/runs/gnn"),
+        default=Path("out/training_runs/supervised"),
         help="Directory where training artefacts will be stored",
     )
     parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
