@@ -107,6 +107,9 @@ python-dotenv==1.1.1
 pyyaml==6.0.3
     # via nerion-selfcoder (pyproject.toml)
 requests==2.32.5
+
+# For code explanation scoring
+rouge-score
     # via
     #   nerion-selfcoder (pyproject.toml)
     #   torch-geometric

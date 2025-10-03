@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import json
+import random
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
@@ -58,17 +59,33 @@ class LearningOrchestrator:
 
     def _get_inspiration(self) -> Optional[str]:
         """Selects a source of inspiration based on the meta-policy."""
-        focus = self.meta_policy_evaluator.get_strategic_focus()
-        if focus:
-            print(f"[Inspiration] Meta-Policy selected strategic focus: {focus}")
-        return focus
+        # For now, we will randomly choose from the available lesson types.
+        # In the future, this will be driven by a more sophisticated meta-policy.
+        inspirations = [
+            "refactoring",
+            "bug_fixing",
+            "feature_implementation",
+            "performance_optimization",
+            "code_comprehension",
+        ]
+        inspiration = random.choice(inspirations)
+        print(f"[Inspiration] Randomly selected focus: {inspiration}")
+        return inspiration
 
     def _generate_idea(self, inspiration: str, provider: str | None = None) -> Optional[Dict[str, Any]]:
         """Generates a specific lesson idea based on the inspiration source."""
         print(f"[Idea Generation] Generating concept based on: {inspiration}")
         
+        if inspiration == "bug_fixing":
+            return self._generate_bug_fix_idea(provider)
+        elif inspiration == "feature_implementation":
+            return self._generate_feature_implementation_idea(provider)
+        elif inspiration == "performance_optimization":
+            return self._generate_performance_optimization_idea(provider)
+        elif inspiration == "code_comprehension":
+            return self._generate_code_comprehension_idea(provider)
         try:
-            llm = Coder(role='planner', provider_override=provider)
+            llm = Coder(role='planner')
         except Exception as e:
             print(f"  - ERROR: Could not get LLM provider: {e}")
             return None
@@ -104,12 +121,176 @@ class LearningOrchestrator:
         print(f"  - Generated idea: {idea['name']}")
         return idea
 
+    def _generate_bug_fix_idea(self, provider: str | None = None) -> Optional[Dict[str, Any]]:
+        """Generates a specific bug-fixing lesson idea."""
+        print(f"[Idea Generation] Generating bug-fix concept...")
+        
+        try:
+            llm = Coder(role='planner')
+        except Exception as e:
+            print(f"  - ERROR: Could not get LLM provider: {e}")
+            return None
+
+        system_prompt = (
+            "You are an expert programming educator and curriculum designer. Your task is to devise a concept for a single, specific, and useful bug-fixing lesson for an AI agent. "
+            "The lesson concept must be returned as a JSON object with two keys: 'name' (a short, snake_case identifier for the bug) and 'description' (a one-sentence explanation of the bug)."
+        )
+        user_prompt = f"Propose a bug-fixing lesson concept. The bug should be a common off-by-one error in a loop."
+
+        try:
+            response_json_str = llm.complete_json(prompt=user_prompt, system=system_prompt)
+        except Exception as e:
+            print(f"  - ERROR: Failed to request idea from LLM: {e}")
+            return self._fallback_idea("bug_fixing")
+
+        if not response_json_str:
+            print("  - WARNING: Idea generation LLM returned an empty response. Using offline fallback.")
+            return self._fallback_idea("bug_fixing")
+
+        try:
+            idea = json.loads(response_json_str)
+        except json.JSONDecodeError as e:
+            print(f"  - WARNING: Idea generation JSON parse failed: {e}. Using offline fallback.")
+            return self._fallback_idea("bug_fixing")
+
+        idea['source'] = "bug_fixing"  # Add the source for context
+
+        if not all(k in idea for k in ['name', 'description']):
+            print("  - WARNING: LLM response missing required keys. Using offline fallback.")
+            return self._fallback_idea("bug_fixing")
+
+        print(f"  - Generated bug-fix idea: {idea['name']}")
+        return idea
+
+    def _generate_feature_implementation_idea(self, provider: str | None = None) -> Optional[Dict[str, Any]]:
+        """Generates a specific feature implementation lesson idea."""
+        print(f"[Idea Generation] Generating feature implementation concept...")
+        
+        try:
+            llm = Coder(role='planner')
+        except Exception as e:
+            print(f"  - ERROR: Could not get LLM provider: {e}")
+            return None
+
+        system_prompt = (
+            "You are an expert programming educator and curriculum designer. Your task is to devise a concept for a single, specific, and useful feature implementation lesson for an AI agent. "
+            "The lesson concept must be returned as a JSON object with two keys: 'name' (a short, snake_case identifier for the feature) and 'description' (a one-sentence explanation of the feature)."
+        )
+        user_prompt = f"Propose a feature implementation lesson concept. The feature should be a simple data validation function."
+
+        try:
+            response_json_str = llm.complete_json(prompt=user_prompt, system=system_prompt)
+        except Exception as e:
+            print(f"  - ERROR: Failed to request idea from LLM: {e}")
+            return self._fallback_idea("feature_implementation")
+
+        if not response_json_str:
+            print("  - WARNING: Idea generation LLM returned an empty response. Using offline fallback.")
+            return self._fallback_idea("feature_implementation")
+
+        try:
+            idea = json.loads(response_json_str)
+        except json.JSONDecodeError as e:
+            print(f"  - WARNING: Idea generation JSON parse failed: {e}. Using offline fallback.")
+            return self._fallback_idea("feature_implementation")
+
+        idea['source'] = "feature_implementation"  # Add the source for context
+
+        if not all(k in idea for k in ['name', 'description']):
+            print("  - WARNING: LLM response missing required keys. Using offline fallback.")
+            return self._fallback_idea("feature_implementation")
+
+        print(f"  - Generated feature implementation idea: {idea['name']}")
+        return idea
+
+    def _generate_performance_optimization_idea(self, provider: str | None = None) -> Optional[Dict[str, Any]]:
+        """Generates a specific performance optimization lesson idea."""
+        print(f"[Idea Generation] Generating performance optimization concept...")
+        
+        try:
+            llm = Coder(role='planner')
+        except Exception as e:
+            print(f"  - ERROR: Could not get LLM provider: {e}")
+            return None
+
+        system_prompt = (
+            "You are an expert programming educator and curriculum designer. Your task is to devise a concept for a single, specific, and useful performance optimization lesson for an AI agent. "
+            "The lesson concept must be returned as a JSON object with two keys: 'name' (a short, snake_case identifier for the optimization) and 'description' (a one-sentence explanation of the optimization)."
+        )
+        user_prompt = f"Propose a performance optimization lesson concept. The optimization should be a simple algorithm optimization, such as replacing a list with a set for faster lookups."
+
+        try:
+            response_json_str = llm.complete_json(prompt=user_prompt, system=system_prompt)
+        except Exception as e:
+            print(f"  - ERROR: Failed to request idea from LLM: {e}")
+            return self._fallback_idea("performance_optimization")
+
+        if not response_json_str:
+            print("  - WARNING: Idea generation LLM returned an empty response. Using offline fallback.")
+            return self._fallback_idea("performance_optimization")
+
+        try:
+            idea = json.loads(response_json_str)
+        except json.JSONDecodeError as e:
+            print(f"  - WARNING: Idea generation JSON parse failed: {e}. Using offline fallback.")
+            return self._fallback_idea("performance_optimization")
+
+        idea['source'] = "performance_optimization"  # Add the source for context
+
+        if not all(k in idea for k in ['name', 'description']):
+            print("  - WARNING: LLM response missing required keys. Using offline fallback.")
+            return self._fallback_idea("performance_optimization")
+
+        print(f"  - Generated performance optimization idea: {idea['name']}")
+        return idea
+
+    def _generate_code_comprehension_idea(self, provider: str | None = None) -> Optional[Dict[str, Any]]:
+        """Generates a specific code comprehension lesson idea."""
+        print(f"[Idea Generation] Generating code comprehension concept...")
+        
+        try:
+            llm = Coder(role='planner')
+        except Exception as e:
+            print(f"  - ERROR: Could not get LLM provider: {e}")
+            return None
+
+        system_prompt = (
+            "You are an expert programming educator and curriculum designer. Your task is to devise a concept for a single, specific, and useful code comprehension lesson for an AI agent. "
+            "The lesson concept must be returned as a JSON object with two keys: 'name' (a short, snake_case identifier for the concept) and 'description' (a one-sentence explanation of the concept)."
+        )
+        user_prompt = f"Propose a code comprehension lesson concept. The concept should be a simple Python function that is not immediately obvious from the code itself."
+
+        try:
+            response_json_str = llm.complete_json(prompt=user_prompt, system=system_prompt)
+        except Exception as e:
+            print(f"  - ERROR: Failed to request idea from LLM: {e}")
+            return self._fallback_idea("code_comprehension")
+
+        if not response_json_str:
+            print("  - WARNING: Idea generation LLM returned an empty response. Using offline fallback.")
+            return self._fallback_idea("code_comprehension")
+
+        try:
+            idea = json.loads(response_json_str)
+        except json.JSONDecodeError as e:
+            print(f"  - WARNING: Idea generation JSON parse failed: {e}. Using offline fallback.")
+            return self._fallback_idea("code_comprehension")
+
+        idea['source'] = "code_comprehension"  # Add the source for context
+
+        if not all(k in idea for k in ['name', 'description']):
+            print("  - WARNING: LLM response missing required keys. Using offline fallback.")
+            return self._fallback_idea("code_comprehension")
+
+        print(f"  - Generated code comprehension idea: {idea['name']}")
+        return idea
+
     def _assess_impact(self, idea: Dict[str, Any], provider: str | None = None) -> Tuple[bool, str]:
         """Acts as the 'Critic' to evaluate the potential impact of a lesson idea."""
         print(f"[Impact Assessment] Critic is evaluating idea: {idea['name']}")
         
         try:
-            llm = Coder(role='planner', provider_override=provider)
+            llm = Coder(role='planner')
         except Exception as e:
             print(f"  - ERROR: Could not get LLM provider for Critic: {e}")
             return False, "Could not instantiate Critic LLM."
@@ -146,7 +327,7 @@ class LearningOrchestrator:
 
         print(f"  - Critic scores: {scores}")
 
-        IMPACT_THRESHOLD = 7
+        IMPACT_THRESHOLD = 6
         CLARITY_THRESHOLD = 6
 
         if scores['impact_score'] < IMPACT_THRESHOLD:
@@ -187,6 +368,16 @@ class LearningOrchestrator:
     def _trigger_curriculum_generation(self, idea: Dict[str, Any]):
         """Calls the curriculum generator script for a validated idea."""
         print(f"[Curriculum Generation] Triggering generator for: {idea['name']}")
+        if idea['source'] == "bug_fixing":
+            script_name = "nerion_digital_physicist.generation.bug_fix_generator"
+        elif idea['source'] == "feature_implementation":
+            script_name = "nerion_digital_physicist.generation.feature_generator"
+        elif idea['source'] == "performance_optimization":
+            script_name = "nerion_digital_physicist.generation.performance_generator"
+        elif idea['source'] == "code_comprehension":
+            script_name = "nerion_digital_physicist.generation.explanation_generator"
+        else:
+            script_name = "nerion_digital_physicist.generation.curriculum_generator"
         try:
             proc = subprocess.run(
                 [

@@ -99,6 +99,7 @@ class AgentV2:
         self.adaptive_epsilon = bool(adaptive_epsilon)
         self.entropy_bonus = float(entropy_bonus)
         self.num_mc_passes = num_mc_passes
+        self.learning_rate = learning_rate
         self._checkpoint_metadata: dict[str, Any] = {}
 
     def learn(
@@ -137,7 +138,7 @@ class AgentV2:
             self._update_adaptive_parameters(surprise)
 
             target = torch.tensor([success_score])
-            loss = self.criterion(mean_prediction, target)
+            loss = self.criterion(mean_prediction, target.squeeze())
             total_loss += loss.item()
 
         loss = torch.tensor(total_loss / batch_size, requires_grad=True)

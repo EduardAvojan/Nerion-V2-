@@ -21,6 +21,7 @@ class Coder:
         base_url: Optional[str] = None,
         temperature: float = 0.1,
         role: str = "code",
+        provider_override: Optional[str] = None,
     ) -> None:
         if model or backend or base_url:
             warnings.warn(
@@ -30,6 +31,7 @@ class Coder:
             )
         self.temperature = float(temperature)
         self.role = role
+        self.provider_override = provider_override
         self._registry = get_registry()
 
     @staticmethod
@@ -62,6 +64,7 @@ class Coder:
                 messages=messages,
                 temperature=self.temperature,
                 response_format=response_format,
+                provider_override=self.provider_override,
             )
         except ProviderNotConfigured:
             return None
