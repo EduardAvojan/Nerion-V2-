@@ -1,3 +1,10 @@
+"""
+Knowledge graph implementation for storing and retrieving code relationships.
+
+This module provides the KnowledgeGraph class which uses NetworkX to build
+and manage a directed graph representing code structure, dependencies, and
+refactoring relationships.
+"""
 from __future__ import annotations
 
 import networkx as nx
@@ -5,17 +12,51 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 class KnowledgeGraph:
-    """A graph-based memory system for storing and retrieving knowledge."""
+    """
+    A graph-based memory system for storing and retrieving knowledge.
+    
+    This class provides methods to build and query a directed graph representing
+    code structure, dependencies, and refactoring relationships.
+    
+    Attributes:
+        graph (nx.DiGraph): The underlying NetworkX directed graph
+    
+    Example:
+        >>> kg = KnowledgeGraph()
+        >>> kg.add_node("file1.py", "File", path="/path/to/file1.py")
+        >>> kg.add_edge("file1.py", "func1", "CONTAINS")
+    """
 
-    def __init__(self, graph: nx.DiGraph | None = None):
+    def __init__(self, graph: nx.DiGraph | None = None) -> None:
+        """
+        Initialize the KnowledgeGraph.
+        
+        Args:
+            graph: Optional existing NetworkX graph to use
+        """
         self.graph = graph if graph is not None else nx.DiGraph()
 
-    def add_node(self, node_id: str, node_type: str, **attrs):
-        """Add a node to the graph."""
+    def add_node(self, node_id: str, node_type: str, **attrs) -> None:
+        """
+        Add a node to the graph.
+        
+        Args:
+            node_id: Unique identifier for the node
+            node_type: Type of the node (e.g., 'File', 'Function', 'Class')
+            **attrs: Additional attributes for the node
+        """
         self.graph.add_node(node_id, type=node_type, **attrs)
 
-    def add_edge(self, source_id: str, target_id: str, edge_type: str, **attrs):
-        """Add a directed edge to the graph."""
+    def add_edge(self, source_id: str, target_id: str, edge_type: str, **attrs) -> None:
+        """
+        Add a directed edge to the graph.
+        
+        Args:
+            source_id: Source node identifier
+            target_id: Target node identifier
+            edge_type: Type of relationship (e.g., 'CONTAINS', 'CALLS', 'MODIFIES')
+            **attrs: Additional attributes for the edge
+        """
         self.graph.add_edge(source_id, target_id, type=edge_type, **attrs)
 
     def get_functions_in_file(self, file_id: str) -> List[str]:
@@ -37,12 +78,25 @@ class KnowledgeGraph:
                 return self.graph.nodes[target]
         return None
 
-    def save(self, path: Path):
-        """Save the graph to a file."""
+    def save(self, path: Path) -> None:
+        """
+        Save the graph to a file.
+        
+        Args:
+            path: Path where to save the graph
+        """
         nx.write_graphml(self.graph, path)
 
     @classmethod
-    def load(cls, path: Path) -> KnowledgeGraph:
-        """Load a graph from a file."""
+    def load(cls, path: Path) -> "KnowledgeGraph":
+        """
+        Load a graph from a file.
+        
+        Args:
+            path: Path to the graph file
+            
+        Returns:
+            New KnowledgeGraph instance loaded from file
+        """
         graph = nx.read_graphml(path)
         return cls(graph)

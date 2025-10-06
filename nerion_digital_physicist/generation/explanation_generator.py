@@ -10,10 +10,10 @@ from pathlib import Path
 from app.parent.coder import Coder
 from nerion_digital_physicist.db.curriculum_store import CurriculumStore
 
-def _generate_code_explanation(name: str, description: str, provider: str | None = None) -> dict[str, str] | None:
+def _generate_code_explanation(name: str, description: str, provider: str | None = None, project_id: str | None = None, location: str | None = None, model_name: str | None = None) -> dict[str, str] | None:
     """Generates a code explanation lesson using an LLM."""
     try:
-        llm = Coder(role='coder')
+        llm = Coder(role='coder', provider_override=provider, project_id=project_id, location=location, model_name=model_name)
     except Exception as e:
         print(f"  - ERROR: Could not get LLM provider: {e}", file=sys.stderr)
         return None
@@ -54,11 +54,14 @@ def main():
     parser.add_argument("--name", required=True, help="The name of the code explanation lesson.")
     parser.add_argument("--description", required=True, help="A description of the concept.")
     parser.add_argument("--provider", default=None, help="The LLM provider to use.")
+    parser.add_argument("--project-id", type=str, default=None, help="Google Cloud Project ID for Vertex AI.")
+    parser.add_argument("--location", type=str, default=None, help="Google Cloud location for Vertex AI (e.g., 'us-central1').")
+    parser.add_argument("--model-name", type=str, default=None, help="Vertex AI model name to use (e.g., 'gemini-pro').")
     args = parser.parse_args()
 
     print(f"Generating code explanation lesson: {args.name}")
 
-    code_explanation = _generate_code_explanation(args.name, args.description, args.provider)
+    code_explanation = _generate_code_explanation(args.name, args.description, args.provider, args.project_id, args.location, args.model_name)
 
     if code_explanation:
         store = CurriculumStore(Path("out/learning/curriculum.sqlite"))
@@ -66,8 +69,9 @@ def main():
             "name": args.name,
             "description": args.description,
             "focus_area": "code_comprehension",
-            "code_snippet": code_explanation["code_snippet"],
-            "explanation": code_explanation["explanation"],
+            "before_code": code_explanation["code_snippet"],
+            "after_code": code_explanation["explanation"],
+            "test_code": "# Code explanation lesson - no test code required",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         store.add_code_explanation(explanation_data)

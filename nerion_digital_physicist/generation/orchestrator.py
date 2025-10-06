@@ -1,4 +1,8 @@
-"""Orchestrate generation workers until the queue is drained."""
+"""DEPRECATED: Orchestrate generation workers until the queue is drained.
+
+This template-based generation system has been deprecated in favor of LLM-based generators.
+See DEPRECATED_TEMPLATE_SYSTEM.md for details.
+"""
 from __future__ import annotations
 
 import argparse
@@ -24,6 +28,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    print("WARNING: This template-based generation system is DEPRECATED.")
+    print("Please use the LLM-based generators instead.")
+    print("See DEPRECATED_TEMPLATE_SYSTEM.md for details.")
+    
     args = parse_args()
     queue_root = Path(args.queue_root)
     output_root = Path(args.output_root)

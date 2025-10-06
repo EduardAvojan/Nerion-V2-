@@ -1,4 +1,8 @@
-"""Worker harness for processing generation queue items."""
+"""DEPRECATED: Worker harness for processing generation queue items.
+
+This template-based generation system has been deprecated in favor of LLM-based generators.
+See DEPRECATED_TEMPLATE_SYSTEM.md for details.
+"""
 from __future__ import annotations
 
 import uuid

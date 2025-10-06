@@ -44,6 +44,7 @@ class ReplayStore:
         self.file_path.touch(exist_ok=True)
 
     def _load_all(self) -> List[Experience]:
+        """Load all experiences - use sparingly to avoid memory issues."""
         experiences: List[Experience] = []
         with self.file_path.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -53,6 +54,31 @@ class ReplayStore:
                 data = json.loads(line)
                 experiences.append(Experience(**data))
         return experiences
+    
+    def _load_batch(self, limit: int = 100, offset: int = 0) -> List[Experience]:
+        """Load experiences in batches to avoid memory issues."""
+        experiences: List[Experience] = []
+        with self.file_path.open("r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+            start_idx = offset
+            end_idx = min(offset + limit, len(lines))
+            
+            for line in lines[start_idx:end_idx]:
+                line = line.strip()
+                if not line:
+                    continue
+                data = json.loads(line)
+                experiences.append(Experience(**data))
+        return experiences
+    
+    def get_count(self) -> int:
+        """Get total number of experiences without loading them all."""
+        count = 0
+        with self.file_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    count += 1
+        return count
 
     def _write_all(self, experiences: Iterable[Experience]) -> None:
         with self.file_path.open("w", encoding="utf-8") as fh:

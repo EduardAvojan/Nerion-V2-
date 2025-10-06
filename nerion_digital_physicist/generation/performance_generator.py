@@ -10,10 +10,10 @@ from pathlib import Path
 from app.parent.coder import Coder
 from nerion_digital_physicist.db.curriculum_store import CurriculumStore
 
-def _generate_performance_optimization(name: str, description: str, provider: str | None = None) -> dict[str, str] | None:
+def _generate_performance_optimization(name: str, description: str, provider: str | None = None, project_id: str | None = None, location: str | None = None, model_name: str | None = None) -> dict[str, str] | None:
     """Generates a performance optimization lesson using an LLM."""
     try:
-        llm = Coder(role='coder')
+        llm = Coder(role='coder', provider_override=provider, project_id=project_id, location=location, model_name=model_name)
     except Exception as e:
         print(f"  - ERROR: Could not get LLM provider: {e}", file=sys.stderr)
         return None
@@ -54,11 +54,14 @@ def main():
     parser.add_argument("--name", required=True, help="The name of the performance optimization lesson.")
     parser.add_argument("--description", required=True, help="A description of the bottleneck.")
     parser.add_argument("--provider", default=None, help="The LLM provider to use.")
+    parser.add_argument("--project-id", type=str, default=None, help="Google Cloud Project ID for Vertex AI.")
+    parser.add_argument("--location", type=str, default=None, help="Google Cloud location for Vertex AI (e.g., 'us-central1').")
+    parser.add_argument("--model-name", type=str, default=None, help="Vertex AI model name to use (e.g., 'gemini-pro').")
     args = parser.parse_args()
 
     print(f"Generating performance optimization lesson: {args.name}")
 
-    performance_optimization = _generate_performance_optimization(args.name, args.description, args.provider)
+    performance_optimization = _generate_performance_optimization(args.name, args.description, args.provider, args.project_id, args.location, args.model_name)
 
     if performance_optimization:
         store = CurriculumStore(Path("out/learning/curriculum.sqlite"))
@@ -66,9 +69,9 @@ def main():
             "name": args.name,
             "description": args.description,
             "focus_area": "performance_optimization",
-            "inefficient_code": performance_optimization["inefficient_code"],
+            "before_code": performance_optimization["inefficient_code"],
+            "after_code": performance_optimization["optimized_code"],
             "test_code": performance_optimization["test_code"],
-            "optimized_code": performance_optimization["optimized_code"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         store.add_performance_optimization(performance_data)

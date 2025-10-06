@@ -1,5 +1,10 @@
-"Builds a project-wide code graph representing all files, classes, functions,
-and their relationships, including imports."
+"""
+Builds a project-wide code graph representing all files, classes, functions,
+and their relationships, including imports.
+
+This module provides the ProjectParser class which analyzes Python projects
+to build dependency graphs and identify test files.
+"""
 from __future__ import annotations
 
 import os
@@ -12,7 +17,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ProjectParser:
-    def __init__(self, project_root):
+    """
+    Parses Python projects to build dependency graphs and identify test files.
+    
+    Attributes:
+        project_root (str): Absolute path to the project root directory
+        direct_index (defaultdict): Maps file paths to sets of files that import them
+        all_files (set): Set of all Python files found in the project
+        test_files (set): Set of test files identified by naming conventions
+    """
+    
+    def __init__(self, project_root: str) -> None:
+        """
+        Initialize the ProjectParser.
+        
+        Args:
+            project_root: Path to the project root directory
+        """
         # Ensure the project root is an absolute, normalized path
         self.project_root = os.path.abspath(project_root)
         # Direct Index: Maps absolute path of a source file to a set of files that import it.
@@ -20,8 +41,13 @@ class ProjectParser:
         self.all_files = set()
         self.test_files = set()
 
-    def parse_project(self):
-        """Iterates through the project, parses files, and builds the Direct Index."""
+    def parse_project(self) -> None:
+        """
+        Iterate through the project, parse files, and build the Direct Index.
+        
+        This method walks through all Python files in the project and builds
+        a dependency graph showing which files import which other files.
+        """
         logger.info(f"Starting project parsing at: {self.project_root}")
         for root, _, files in os.walk(self.project_root):
             for file in files:
@@ -37,8 +63,16 @@ class ProjectParser:
 
         logger.info(f"Project parsing complete. Found {len(self.all_files)} Python files, including {len(self.test_files)} test files.")
 
-    def _is_test_file(self, file_path):
-        """Determines if a file is a test file based on standard conventions."""
+    def _is_test_file(self, file_path: str) -> bool:
+        """
+        Determine if a file is a test file based on standard conventions.
+        
+        Args:
+            file_path: Path to the file to check
+            
+        Returns:
+            True if the file appears to be a test file, False otherwise
+        """
         # Assuming pytest conventions (test_*.py or *_test.py)
         basename = os.path.basename(file_path)
         return basename.startswith("test_") or basename.endswith("_test.py")

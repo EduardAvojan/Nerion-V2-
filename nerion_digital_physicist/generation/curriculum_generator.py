@@ -14,6 +14,7 @@ import subprocess
 import sys
 import argparse
 import os
+import logging
 from pathlib import Path
 from typing import Tuple, Dict, Any, Optional
 from datetime import datetime, timezone
@@ -24,6 +25,10 @@ from torch_geometric.nn import global_add_pool, global_max_pool, global_mean_poo
 from app.parent.coder import Coder
 
 from nerion_digital_physicist.db.curriculum_store import CurriculumStore
+from nerion_digital_physicist.infrastructure.errors import LLMGenerationError, ValidationError, DatabaseError
+from nerion_digital_physicist.infrastructure.retry import retry_llm_call, retry_database_call
+from nerion_digital_physicist.infrastructure.logging import with_correlation_id, track_performance, log_with_context, logger
+from nerion_digital_physicist.infrastructure.validation import validate_lesson_data, validate_llm_response
 from nerion_digital_physicist.agent.brain import build_gnn
 from nerion_digital_physicist.agent.data import create_graph_data_from_source
 from nerion_digital_physicist.agent.semantics import get_global_embedder
@@ -60,31 +65,10 @@ def _load_model_metadata() -> Dict[str, Any]:
     }
 
 
-def _offline_lesson_bundle(lesson_description: str, lesson_name: str) -> Dict[str, Any]:
-    """Return a deterministic lesson bundle when LLM access is unavailable."""
-    before_code = (
-        "def add(a: int, b: int) -> int:\n"
-        "    \"\"\"Return the sum of two integers.\"\"\"\n"
-        "    return a - b\n"
-    )
-    after_code = (
-        "def add(a: int, b: int) -> int:\n"
-        "    \"\"\"Return the sum of two integers.\"\"\"\n"
-        "    return a + b\n"
-    )
-    test_code = (
-        "from module import add\n\n"
-        "def test_addition() -> None:\n"
-        "    assert add(2, 3) == 5\n"
-    )
-    print("   - Using offline curriculum template to continue the cycle.")
-    return {
-        "name": lesson_name,
-        "description": lesson_description,
-        "before_code": before_code,
-        "after_code": after_code,
-        "test_code": test_code,
-    }
+def _offline_lesson_bundle(lesson_description: str, lesson_name: str) -> Optional[Dict[str, Any]]:
+    """Return None when LLM access is unavailable - fail fast instead of generating placeholders."""
+    print("   - ERROR: LLM access unavailable. Cannot generate lesson without LLM.")
+    return None
 
 
 def _normalise_redaction_placeholders(bundle: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,64 +83,170 @@ def _normalise_redaction_placeholders(bundle: Dict[str, Any]) -> Dict[str, Any]:
             bundle[key] = value.replace("[REDACTED]", replacement).replace("{REDACTED}", replacement)
     return bundle
 
-def _generate_lesson_from_llm(lesson_description: str, lesson_name: str) -> Optional[Dict[str, Any]]:
+@retry_llm_call(max_attempts=3)
+@with_correlation_id
+@track_performance
+def _generate_lesson_from_llm(lesson_description: str, lesson_name: str, provider: str | None = None, project_id: str | None = None, location: str | None = None, model_name: str | None = None) -> Optional[Dict[str, Any]]:
     """Uses an LLM to generate the code snippets for a new training lesson."""
-    print("   - Generating code snippets from LLM...")
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Starting LLM lesson generation",
+        lesson_name=lesson_name,
+        provider=provider,
+        model=model_name
+    )
+    
     try:
         os.environ['NERION_V2_REQUEST_TIMEOUT'] = '300'
-        llm = Coder(role='code')
+        llm = Coder(role='code', provider_override=provider, project_id=project_id, location=location, model_name=model_name)
     except Exception as e:
-        print(f"   - Could not get LLM provider: {e}", file=sys.stderr)
-        return _offline_lesson_bundle(lesson_description, lesson_name)
+        log_with_context(
+            logger,
+            logging.ERROR,
+            "Failed to initialize LLM provider",
+            error=str(e),
+            provider=provider,
+            model=model_name
+        )
+        raise LLMGenerationError(f"Could not get LLM provider: {e}", provider=provider, model=model_name)
 
     system_prompt = (
-        "You are an expert Python programmer and educator. Your task is to create a training exercise. "
+        "You are an expert Python programmer, security engineer, and educator creating HIGH-IMPACT production-ready training exercises. "
+        "Your task is to create a lesson that demonstrates a CRITICAL improvement in code quality, security, reliability, or performance. "
         "Given a description, provide three pieces of Python code in a single JSON object with the keys: 'before_code', 'after_code', and 'test_code'."
-        "\n**Execution Context:** Your generated code will be run in a temporary sandbox. The `before_code` and `after_code` will each be saved to a file named `module.py`. "
-        "Your `test_code` will be saved in `test_module.py` and should therefore import the code to be tested using `from module import ...`."
-        "\nThe 'test_code' must be a valid pytest file that fails on 'before_code' and passes on 'after_code'."
-        "\nHypothesis is installed in this environment—prefer using Hypothesis for property-based tests rather than hand-rolled fuzzers."
-        "\nIf you include any randomized loops (for example, custom fuzzing) keep them lightweight (≤150 iterations) and avoid long shrink loops so the vetting run stays fast."
-        "\nWhen redacting secrets or sensitive values, use a placeholder that shares no characters with the original secret (e.g., '<<REDACTED>>'), so containment checks remain valid."
-        "\nWhen you use asyncio.TaskGroup (or any construct that raises ExceptionGroup), flatten the exception by catching `except* Exception` and re-raising the first inner exception so single-exception tests pass cleanly."
-        "\nWhen implementing retry/backoff helpers, ensure each retry actually sleeps once using a jitter-adjusted delay (e.g., call `random.uniform` and `time.sleep` before the next attempt)."
-        "\n**Hypothesis Health Checks:** If you write a test that uses both the `@given` decorator and a `pytest` fixture (like `monkeypatch`), you must add the `@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])` decorator to the test function to avoid a `FailedHealthCheck` error."
+        "\n"
+        "**CRITICAL REQUIREMENTS:**\n"
+        "1. **Real Problem:** `before_code` must have a genuine, demonstrable flaw (security vulnerability, race condition, memory leak, performance bottleneck, etc.)\n"
+        "2. **Clear Fix:** `after_code` must fix the problem completely and demonstrate best practices\n"
+        "3. **Proves Impact:** `test_code` must FAIL on before_code and PASS on after_code, proving the improvement is real\n"
+        "4. **Production Quality:** Code should be realistic, not trivial examples. Use actual libraries and patterns from production systems.\n"
+        "\n"
+        "**Execution Context:** Code runs in a sandbox. `before_code` and `after_code` are saved as `module.py`. Tests in `test_module.py` import via `from module import ...`\n"
+        "\n"
+        "**Testing Best Practices:**\n"
+        "- ALWAYS include ALL imports at the top of test_code (import pytest, import re, from hypothesis import given, etc.)\n"
+        "- If using re.escape(), re.match(), etc., MUST add: import re\n"
+        "- If using @given(), MUST add: from hypothesis import given, strategies as st, settings, HealthCheck\n"
+        "- DO NOT use function-scoped pytest fixtures with @given() - causes FailedHealthCheck error\n"
+        "- Use Hypothesis for property-based testing (already installed) instead of hand-rolled fuzzers\n"
+        "- Keep randomized loops lightweight (≤150 iterations) for fast vetting\n"
+        "- For async/ExceptionGroup: Use `except* Exception` and re-raise first inner exception\n"
+        "- For retry/backoff: Ensure jitter is called and sleep occurs (e.g., `random.uniform` + `time.sleep`)\n"
+        "- For secrets: Use distinct placeholders like '<<REDACTED>>' that share no characters with original\n"
+        "\n"
+        "**Focus Areas (ensure your lesson fits one):**\n"
+        "- Security: SQL injection, XSS, CSRF, authentication, secrets management\n"
+        "- Reliability: Error handling, retries, circuit breakers, graceful degradation\n"
+        "- Performance: N+1 queries, caching, connection pooling, algorithmic complexity\n"
+        "- Concurrency: Race conditions, deadlocks, thread safety, async patterns\n"
+        "- Data Integrity: Validation, sanitization, constraints, transactions\n"
     )
     user_prompt = f"Create a training exercise for the following lesson: {lesson_description}"
 
     try:
         response_json_str = llm.complete_json(prompt=user_prompt, system=system_prompt)
         if not response_json_str:
-            print("   - LLM returned an empty response.", file=sys.stderr)
-            return _offline_lesson_bundle(lesson_description, lesson_name)
-        data = json.loads(response_json_str)
+            log_with_context(
+                logger,
+                logging.ERROR,
+                "LLM returned empty response",
+                lesson_name=lesson_name,
+                provider=provider
+            )
+            raise LLMGenerationError("LLM returned an empty response", provider=provider, model=model_name)
+        
+        # Validate the response
+        validated_response = validate_llm_response(response_json_str)
+        
+        data = json.loads(validated_response)
         data['name'] = lesson_name
         data['description'] = lesson_description
+        
+        log_with_context(
+            logger,
+            logging.INFO,
+            "LLM lesson generation completed successfully",
+            lesson_name=lesson_name,
+            provider=provider,
+            model=model_name
+        )
+        
         return _normalise_redaction_placeholders(data)
+    except json.JSONDecodeError as e:
+        log_with_context(
+            logger,
+            logging.ERROR,
+            "Failed to parse LLM JSON response",
+            error=str(e),
+            lesson_name=lesson_name,
+            provider=provider,
+            response_preview=response_json_str[:200] if response_json_str else None
+        )
+        raise LLMGenerationError(f"Failed to parse LLM JSON response: {e}", provider=provider, model=model_name)
+    except ValidationError as e:
+        log_with_context(
+            logger,
+            logging.ERROR,
+            "LLM response validation failed",
+            error=str(e),
+            lesson_name=lesson_name,
+            provider=provider
+        )
+        raise
     except Exception as e:
-        print(f"   - Failed to generate or parse LLM response: {e}", file=sys.stderr)
-        return _offline_lesson_bundle(lesson_description, lesson_name)
+        log_with_context(
+            logger,
+            logging.ERROR,
+            "Failed to generate lesson from LLM",
+            error=str(e),
+            lesson_name=lesson_name,
+            provider=provider
+        )
+        raise LLMGenerationError(f"Failed to generate or parse LLM response: {e}", provider=provider, model=model_name)
 
-def _repair_lesson(lesson_description: str, lesson_name: str, failure_log: str) -> Optional[Dict[str, Any]]:
+def _repair_lesson(lesson_description: str, lesson_name: str, failure_log: str, provider: str | None = None, project_id: str | None = None, location: str | None = None, model_name: str | None = None) -> Optional[Dict[str, Any]]:
     """Attempts to repair a failed lesson generation."""
     print("   - Repairing lesson with LLM...")
     try:
         os.environ['NERION_V2_REQUEST_TIMEOUT'] = '300'
-        llm = Coder(role='code')
+        llm = Coder(role='code', provider_override=provider, project_id=project_id, location=location, model_name=model_name)
     except Exception as e:
         print(f"   - Could not get LLM provider for Repair: {e}", file=sys.stderr)
-        return _offline_lesson_bundle(lesson_description, lesson_name)
+        return None
 
     system_prompt = (
-        "You are a debugging expert. A generated programming lesson failed its verification test. "
-        "Your task is to analyze the failure and provide a corrected version. "
-        "\n**Execution Context:** The code is run in a sandbox where the file to be tested is named `module.py`. Ensure your test code imports from `module`. "
+        "You are an expert debugging and repair specialist. A HIGH-IMPACT production-ready programming lesson failed its verification test. "
+        "Your task is to analyze the failure, identify the root cause, and provide a corrected version that demonstrates a clear before/after improvement. "
+        "\n"
+        "**Critical Requirements:**\n"
+        "1. **Execution Context:** Code runs in a sandbox where the file is `module.py`. Tests must import from `module`.\n"
+        "2. **Clear Distinction:** `before_code` must have a real, demonstrable problem. `after_code` must clearly fix it.\n"
+        "3. **Test Quality:** Tests must prove the problem exists in `before_code` and is fixed in `after_code`.\n"
+        "4. **Production Focus:** Ensure the lesson teaches a critical skill (security, reliability, performance, correctness).\n"
+        "\n"
+        "**Testing Guidelines:**\n"
+        "- ALWAYS include ALL imports at the top of test_code (pytest, re, os, hypothesis, etc.)\n"
+        "- If test uses re.escape(), re.match(), etc., MUST import re\n"
+        "- If test uses @given(), MUST import from hypothesis import given, strategies as st\n"
+        "- DO NOT use function-scoped pytest fixtures with @given() - use class-scoped or module-scoped fixtures instead\n"
+        "- Use Hypothesis for property-based testing when validating edge cases\n"
+        "- Cap custom randomized loops at 150 iterations maximum\n"
+        "- Keep shrinking/diagnostic passes short for fast pytest execution\n"
+        "- For async code with TaskGroup/ExceptionGroup, handle exceptions properly\n"
+        "- For retry/backoff functions, ensure jitter is invoked and sleep occurs\n"
+        "- When redacting secrets, use distinct placeholders like '<<REDACTED>>' to avoid test failures\n"
+        "\n"
+        "**Common Failure Patterns to Fix:**\n"
+        "- NameError (e.g., 're' is not defined): Missing import statement - add it to test_code\n"
+        "- Hypothesis FailedHealthCheck (function-scoped fixture): Change fixture scope or remove @given()\n"
+        "- Test unexpectedly PASSED on before_code: The bug isn't real or test is wrong\n"
+        "- Test unexpectedly FAILED on after_code: The fix doesn't work or introduces new bugs\n"
+        "- Syntax errors: Check imports, indentation, missing arguments\n"
+        "- Import errors: Ensure all required modules are imported in test_code\n"
+        "- Assertion errors: Make sure assertions match the actual behavior\n"
+        "\n"
         "Return a single JSON object with corrected 'before_code', 'after_code', and 'test_code' keys."
-        "\nHypothesis is available—use it for property-based checks whenever suitable."
-        "\nIf you must rely on custom randomized loops, cap them at 150 iterations and keep shrinking/diagnostic passes short so pytest completes quickly."
-        "\nWhen redacting secrets or sensitive values, replace them with a placeholder that uses entirely different characters (for example, '<<REDACTED>>') so containment assertions do not fail." 
-        "\nIf your fix involves asyncio.TaskGroup or ExceptionGroup, wrap the TaskGroup body in a `try` / `except* Exception` and re-raise the first inner exception to match tests that expect a single error." 
-        "\nFor retry/backoff functions, make sure the jitter function is invoked and the code sleeps at least once before retrying so tests that count jitter usage succeed." 
     )
     user_prompt = (
         f"The original lesson description was: {lesson_description}\n\n"
@@ -168,14 +258,14 @@ def _repair_lesson(lesson_description: str, lesson_name: str, failure_log: str) 
         response_json_str = llm.complete_json(prompt=user_prompt, system=system_prompt)
         if not response_json_str:
             print("   - Repair LLM returned an empty response.", file=sys.stderr)
-            return _offline_lesson_bundle(lesson_description, lesson_name)
+            return None
         data = json.loads(response_json_str)
         data['name'] = lesson_name
         data['description'] = lesson_description
         return _normalise_redaction_placeholders(data)
     except Exception as e:
         print(f"   - Failed to generate or parse LLM response for repair: {e}", file=sys.stderr)
-        return _offline_lesson_bundle(lesson_description, lesson_name)
+        return None
 
 def _run_test_in_sandbox(source_code: str, test_code: str) -> subprocess.CompletedProcess:
     """Runs pytest on the given code and returns the process result."""
@@ -416,23 +506,54 @@ def _self_vet_lesson(
     print("      - Structural verification passed.")
     return True, "Lesson passed all vetting checks."
 
+@retry_database_call(max_attempts=3)
+@validate_lesson_data
+@track_performance
 def _save_lesson_to_db(lesson_data: Dict[str, Any]):
     """Saves the vetted lesson to the curriculum database."""
-    db_path = Path("out/learning/curriculum.sqlite")
-    store = CurriculumStore(db_path)
-    store.add_lesson(lesson_data)
-    store.close()
+    try:
+        db_path = Path("out/learning/curriculum.sqlite")
+        store = CurriculumStore(db_path)
+        store.add_lesson(lesson_data)
+        store.close()
+        
+        log_with_context(
+            logger,
+            logging.INFO,
+            "Lesson saved to database successfully",
+            lesson_name=lesson_data.get('name'),
+            focus_area=lesson_data.get('focus_area')
+        )
+    except Exception as e:
+        log_with_context(
+            logger,
+            logging.ERROR,
+            "Failed to save lesson to database",
+            error=str(e),
+            lesson_name=lesson_data.get('name')
+        )
+        raise DatabaseError(f"Failed to save lesson to database: {e}", operation="add_lesson", table="lessons")
 
 def main():
     parser = argparse.ArgumentParser(description="Automated Curriculum Generator for the Digital Physicist.")
     parser.add_argument("--description", type=str, required=True, help="A high-level description of the lesson to generate.")
     parser.add_argument("--name", type=str, required=True, help="A short, descriptive name for the new template directory (e.g., 'fix_index_error').")
+    # Configuration from environment variables or defaults
+    default_provider = os.getenv("NERION_LLM_PROVIDER", "openai")
+    default_project_id = os.getenv("NERION_LLM_PROJECT_ID")
+    default_location = os.getenv("NERION_LLM_LOCATION", "us-central1")
+    default_model = os.getenv("NERION_LLM_MODEL", "gpt-4")
+    
+    parser.add_argument("--provider", type=str, default=default_provider, help="LLM provider to use (e.g., 'openai' or 'gemini')")
+    parser.add_argument("--project-id", type=str, default=default_project_id, help="Google Cloud Project ID for Vertex AI.")
+    parser.add_argument("--location", type=str, default=default_location, help="Google Cloud location for Vertex AI (e.g., 'us-central1').")
+    parser.add_argument("--model-name", type=str, default=default_model, help="Vertex AI model name to use (e.g., 'gemini-pro').")
     args = parser.parse_args()
 
     print(f"--- Generating lesson for: {args.description} ---")
 
     # First attempt
-    lesson_bundle = _generate_lesson_from_llm(args.description, args.name)
+    lesson_bundle = _generate_lesson_from_llm(args.description, args.name, args.provider, args.project_id, args.location, args.model_name)
     if not lesson_bundle:
         print("   - Halting: Initial LLM generation failed.")
         sys.exit(1)
@@ -449,7 +570,7 @@ def main():
     # Repair attempt
     if not is_valid:
         print("   - Initial vetting failed. Attempting repair...")
-        repaired_bundle = _repair_lesson(args.description, args.name, reason)
+        repaired_bundle = _repair_lesson(args.description, args.name, reason, args.provider, args.project_id, args.location, args.model_name)
         if not repaired_bundle:
             print("   - Halting: Repair attempt failed.")
             sys.exit(1)

@@ -1,4 +1,8 @@
-"""Task generation harness for Phase 3."""
+"""DEPRECATED: Task generation harness for Phase 3.
+
+This template-based generation system has been deprecated in favor of LLM-based generators.
+See DEPRECATED_TEMPLATE_SYSTEM.md for details.
+"""
 from __future__ import annotations
 
 import hashlib

@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import random
-import sqlite3
 from pathlib import Path
+from nerion_digital_physicist.db.curriculum_store import CurriculumStore
 from typing import Dict, List, Optional, Tuple
 import csv
 
@@ -99,18 +99,8 @@ def main():
 
     # --- Load Lessons from DB ---
     print(f"Loading lessons from {DB_PATH}...")
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    cur = con.cursor()
-    cur.execute("SELECT *, 'refactoring' as type FROM lessons")
-    lessons = cur.fetchall()
-    cur.execute("SELECT *, 'bug_fixing' as type FROM bug_fixes")
-    lessons.extend(cur.fetchall())
-    cur.execute("SELECT *, 'feature_implementation' as type FROM feature_implementations")
-    lessons.extend(cur.fetchall())
-    cur.execute("SELECT *, 'performance_optimization' as type FROM performance_optimizations")
-    lessons.extend(cur.fetchall())
-    con.close()
+    with CurriculumStore(DB_PATH) as store:
+        lessons = store.get_lessons_batch(limit=1000)  # Load in batches to avoid memory issues
     print(f"Loaded {len(lessons)} lessons.")
 
     print("\n2. Initializing environment, memory, and agent...")

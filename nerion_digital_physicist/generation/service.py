@@ -1,4 +1,8 @@
-"""CLI harness for generating Phase 3 tasks."""
+"""DEPRECATED: CLI harness for generating Phase 3 tasks.
+
+This template-based generation system has been deprecated in favor of LLM-based generators.
+See DEPRECATED_TEMPLATE_SYSTEM.md for details.
+"""
 from __future__ import annotations
 
 import argparse
@@ -59,6 +63,10 @@ def load_template_specs(template_weights: Dict[str, float] | None) -> list[Templ
 
 
 def main() -> None:
+    print("WARNING: This template-based generation system is DEPRECATED.")
+    print("Please use the LLM-based generators instead.")
+    print("See DEPRECATED_TEMPLATE_SYSTEM.md for details.")
+    
     args = parse_args()
     template_weights = json.loads(args.templates) if args.templates else None
 

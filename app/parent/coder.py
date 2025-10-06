@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Optional, Dict, List
 import warnings
+import os
 
 from app.chat.providers import (
     ProviderError,
@@ -22,6 +23,9 @@ class Coder:
         temperature: float = 0.1,
         role: str = "code",
         provider_override: Optional[str] = None,
+        project_id: Optional[str] = None,
+        location: Optional[str] = None,
+        model_name: Optional[str] = None,
     ) -> None:
         if model or backend or base_url:
             warnings.warn(
@@ -31,7 +35,27 @@ class Coder:
             )
         self.temperature = float(temperature)
         self.role = role
-        self.provider_override = provider_override
+
+        # Handle legacy Vertex AI parameters by converting to provider_override format
+        if project_id or location or model_name:
+            # Set environment variables for Vertex AI configuration
+            if project_id:
+                os.environ["NERION_V2_VERTEX_PROJECT_ID"] = project_id
+            if location:
+                os.environ["NERION_V2_VERTEX_LOCATION"] = location
+
+            # If provider_override is "vertexai" and model_name is provided,
+            # format it as "vertexai:model_name"
+            if provider_override == "vertexai" and model_name:
+                self.provider_override = f"vertexai:{model_name}"
+            elif model_name and not provider_override:
+                # Assume Vertex AI if model_name is provided with project_id
+                self.provider_override = f"vertexai:{model_name}"
+            else:
+                self.provider_override = provider_override
+        else:
+            self.provider_override = provider_override
+
         self._registry = get_registry()
 
     @staticmethod
@@ -50,6 +74,8 @@ class Coder:
         response_format: Optional[str] = None,
     ) -> Optional[str]:
         messages = self._messages(prompt, system)
+
+        # Add JSON hint if needed for structured output
         if response_format == "json_object":
             has_json_hint = any(
                 msg.get("role") == "system" and "json" in (msg.get("content") or "").lower()
@@ -58,6 +84,7 @@ class Coder:
             if not has_json_hint:
                 messages = ([{"role": "system", "content": "Respond with a valid JSON object."}]
                     + messages)
+
         try:
             resp = self._registry.generate(
                 role=self.role,

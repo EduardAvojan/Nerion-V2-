@@ -356,9 +356,187 @@ class _GoogleAdapter(_ProviderAdapter):
         return embeddings
 
 
+class _VertexAIAdapter(_ProviderAdapter):
+    """Adapter for Google Cloud Vertex AI generative models."""
+
+    def __init__(self, name: str, endpoint: str, api_key: Optional[str]):
+        super().__init__(name, endpoint, api_key)
+        self._project_id: Optional[str] = None
+        self._location: Optional[str] = None
+        self._initialized = False
+
+    def _ensure_initialized(self) -> None:
+        """Initialize Vertex AI SDK with project and location."""
+        if self._initialized:
+            return
+
+        import vertexai
+
+        # Extract project_id and location from endpoint or environment
+        # Endpoint format: "projects/PROJECT_ID/locations/LOCATION"
+        if self.endpoint:
+            parts = self.endpoint.split("/")
+            if len(parts) >= 4 and parts[0] == "projects" and parts[2] == "locations":
+                self._project_id = parts[1]
+                self._location = parts[3]
+
+        # Fall back to environment variables if not in endpoint
+        if not self._project_id:
+            self._project_id = os.getenv("NERION_V2_VERTEX_PROJECT_ID")
+        if not self._location:
+            self._location = os.getenv("NERION_V2_VERTEX_LOCATION", "us-central1")
+
+        if not self._project_id:
+            raise ProviderNotConfigured(
+                "Vertex AI requires project_id in endpoint or NERION_V2_VERTEX_PROJECT_ID env var"
+            )
+
+        # Initialize Vertex AI
+        # Only set credentials path if explicitly provided AND the file exists
+        # Vertex AI Custom Jobs use automatic service account authentication
+        credentials_path = os.getenv("NERION_V2_VERTEX_CREDENTIALS")
+        if credentials_path and os.path.isfile(credentials_path):
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
+
+        vertexai.init(project=self._project_id, location=self._location)
+        self._initialized = True
+
+    def generate(
+        self,
+        *,
+        model: str,
+        prompt: Optional[str],
+        temperature: float,
+        max_tokens: Optional[int],
+        timeout: float,
+        messages: Optional[List[Dict[str, str]]] = None,
+        response_format: Optional[str] = None,
+    ) -> LLMResponse:
+        self._ensure_initialized()
+
+        from vertexai.generative_models import GenerativeModel
+
+        # Create model instance - just use the model name directly
+        vertex_model = GenerativeModel(model)
+
+        # Build messages in Vertex AI format
+        vertex_messages = []
+        system_instruction = None
+
+        if messages:
+            for item in messages:
+                if not isinstance(item, dict):
+                    continue
+                role = str(item.get("role") or "user").lower()
+                text = item.get("content") or ""
+
+                if role == "system":
+                    system_instruction = text
+                else:
+                    # Vertex AI uses "user" and "model" roles
+                    vertex_role = "user" if role != "assistant" else "model"
+                    vertex_messages.append({
+                        "role": vertex_role,
+                        "parts": [{"text": text}]
+                    })
+
+        if not vertex_messages:
+            vertex_messages.append({
+                "role": "user",
+                "parts": [{"text": prompt or ""}]
+            })
+
+        # Build generation config
+        generation_config = {
+            "temperature": max(0.0, min(2.0, float(temperature))),
+        }
+
+        if max_tokens is not None:
+            generation_config["max_output_tokens"] = int(max_tokens)
+
+        if response_format == "json_object":
+            generation_config["response_mime_type"] = "application/json"
+
+        # Add system instruction if provided
+        if system_instruction:
+            # Prepend system instruction to first user message
+            if vertex_messages and vertex_messages[0]["role"] == "user":
+                original_text = vertex_messages[0]["parts"][0]["text"]
+                vertex_messages[0]["parts"][0]["text"] = f"{system_instruction}\n\n{original_text}"
+
+        started = time.perf_counter()
+        try:
+            # Build content for Vertex AI - it expects a list of Content objects or simple text
+            if len(vertex_messages) == 1 and vertex_messages[0]["role"] == "user":
+                # Simple single message case - just pass the text
+                content = vertex_messages[0]["parts"][0]["text"]
+            else:
+                # Multi-turn conversation
+                content = vertex_messages
+
+            response = vertex_model.generate_content(
+                content,
+                generation_config=generation_config
+            )
+            latency = time.perf_counter() - started
+
+            # Extract text from response
+            text = response.text if hasattr(response, 'text') else ""
+
+            # Extract token usage if available
+            prompt_tokens = None
+            completion_tokens = None
+            if hasattr(response, 'usage_metadata'):
+                usage = response.usage_metadata
+                prompt_tokens = getattr(usage, 'prompt_token_count', None)
+                completion_tokens = getattr(usage, 'candidates_token_count', None)
+
+            return LLMResponse(
+                text=text.strip(),
+                provider="vertexai",
+                model=model,
+                latency_s=latency,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+        except Exception as exc:
+            raise ProviderError(f"Vertex AI generation failed: {exc}") from exc
+
+    def embed(
+        self,
+        *,
+        model: str,
+        texts: List[str],
+        timeout: float,
+    ) -> List[List[float]]:
+        self._ensure_initialized()
+
+        from vertexai.language_models import TextEmbeddingModel
+
+        inputs = [str(text) for text in texts if text is not None]
+        if not inputs:
+            return []
+
+        try:
+            embedding_model = TextEmbeddingModel.from_pretrained(model)
+            embeddings_response = embedding_model.get_embeddings(inputs)
+
+            embeddings: List[List[float]] = []
+            for emb in embeddings_response:
+                embeddings.append(emb.values)
+
+            if len(embeddings) != len(inputs):
+                raise ProviderError("Vertex AI embeddings response count mismatch")
+
+            return embeddings
+        except Exception as exc:
+            raise ProviderError(f"Vertex AI embeddings failed: {exc}") from exc
+
+
 _ADAPTERS = {
     "openai": _OpenAIAdapter,
     "google": _GoogleAdapter,
+    "vertexai": _VertexAIAdapter,
 }
 
 
