@@ -1,0 +1,26 @@
+# Dockerfile for Vertex AI Training
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy project files
+COPY . /app/
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -e .
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+# Vertex AI Custom Jobs use automatic service account authentication
+# No need to set GOOGLE_APPLICATION_CREDENTIALS
+
+# Use ENTRYPOINT so args can be appended
+ENTRYPOINT ["python", "generate_massive_curriculum.py"]

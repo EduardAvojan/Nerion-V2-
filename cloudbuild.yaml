@@ -1,0 +1,6 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'Dockerfile.vertex', '-t', 'gcr.io/$PROJECT_ID/nerion-trainer:latest', '.']
+images:
+  - 'gcr.io/$PROJECT_ID/nerion-trainer:latest'
+timeout: 1200s
