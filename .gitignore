@@ -120,3 +120,32 @@ GEMINI.md
 experiments/datasets/
 experiments/runs/
 /out/training_runs/
+
+# Temporary analysis scripts
+analyze_*.py
+scan_*.py
+test_llm_*.py
+quality_check_*.py
+execute_*.py
+manual_check_*.py
+targeted_*.py
+display_*.py
+audit_*.py
+generate_massive_*.py
+
+# Temporary analysis reports
+*_ANALYSIS.md
+*_AUDIT*.md
+*_SCAN_*.md
+*_REPORT.md
+*_CLASSIFICATION.md
+lesson_pattern_analysis.json
+generated_lessons_log.json
+llm_model_test_results.json
+lesson_quality_sample.txt
+
+# Database checkpoints
+checkpoint_*.sqlite
+
+# External repositories (for analysis only)
+external_repos/
