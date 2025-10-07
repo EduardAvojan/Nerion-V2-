@@ -220,13 +220,15 @@ class LearningOrchestrator:
             "c2_disaster_recovery",
         ]
 
-        # If category filter is set, only use that category
+        # If category filter is set, only use inspirations matching that category
         if self._category_filter:
-            if self._category_filter not in inspirations:
-                print(f"[ERROR] Invalid category filter: {self._category_filter}")
+            # Filter inspirations by prefix (e.g., "a1" matches "a1_variable_scope_errors")
+            filtered = [insp for insp in inspirations if insp.startswith(self._category_filter.lower())]
+            if not filtered:
+                print(f"[ERROR] No inspirations found for category filter: {self._category_filter}")
                 return None
-            inspiration = self._category_filter
-            print(f"[Inspiration] Using filtered category: {inspiration}")
+            inspiration = random.choice(filtered)
+            print(f"[Inspiration] Using filtered category: {self._category_filter} -> {inspiration}")
         else:
             inspiration = random.choice(inspirations)
             print(f"[Inspiration] Randomly selected focus: {inspiration}")
