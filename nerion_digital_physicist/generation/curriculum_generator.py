@@ -72,15 +72,31 @@ def _offline_lesson_bundle(lesson_description: str, lesson_name: str) -> Optiona
 
 
 def _normalise_redaction_placeholders(bundle: Dict[str, Any]) -> Dict[str, Any]:
-    """Ensure redaction placeholders cannot collide with original secret characters."""
+    """Ensure redaction placeholders cannot collide with original secret characters.
+    Also validates and converts code fields to strings if LLM returns dicts."""
 
     replacement = "<<REDACTED>>"
     for key in ("before_code", "after_code", "test_code"):
         value = bundle.get(key)
+
+        # Handle case where LLM returns a dict instead of string (TypeError fix)
+        if isinstance(value, dict):
+            print(f"   - WARNING: {key} is a dict, converting to string")
+            # Try to extract 'code' field if it exists, otherwise convert whole dict
+            if 'code' in value:
+                bundle[key] = str(value['code'])
+            else:
+                bundle[key] = str(value)
+            value = bundle[key]
+
         if not isinstance(value, str):
-            continue
+            # If still not a string after conversion, this is an error
+            raise ValueError(f"Field '{key}' must be a string, got {type(value)}: {value}")
+
+        # Normalize redaction placeholders
         if "[REDACTED]" in value or "{REDACTED}" in value:
             bundle[key] = value.replace("[REDACTED]", replacement).replace("{REDACTED}", replacement)
+
     return bundle
 
 @retry_llm_call(max_attempts=3)
