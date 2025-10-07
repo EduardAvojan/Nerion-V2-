@@ -149,3 +149,6 @@ checkpoint_*.sqlite
 
 # External repositories (for analysis only)
 external_repos/
+
+# Claude Code configuration (user-specific)
+.claude/
