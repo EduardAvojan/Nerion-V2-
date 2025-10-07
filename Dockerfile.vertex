@@ -19,8 +19,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:$PYTHONPATH
 # Vertex AI Custom Jobs use automatic service account authentication
 # No need to set GOOGLE_APPLICATION_CREDENTIALS
 
 # Use ENTRYPOINT so args can be appended
-ENTRYPOINT ["python", "generate_massive_curriculum.py"]
+ENTRYPOINT ["python", "vertex_ai/curriculum_generation_job.py"]
