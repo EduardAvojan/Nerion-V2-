@@ -29,7 +29,7 @@ echo "🚀 Submitting A1 Lessons Job (26 lessons)..."
 gcloud ai custom-jobs create \
   --region=${REGION} \
   --display-name="${JOB_NAME}-a1" \
-  --worker-pool-spec=machine-type=n1-standard-4,replica-count=1,container-image-uri=${IMAGE_URI} \
+  --worker-pool-spec=machine-type=n1-highmem-4,replica-count=1,container-image-uri=${IMAGE_URI} \
   --args="--cycles=26,--bucket=${BUCKET_NAME},--provider=vertexai:gemini-2.5-pro,--category=a1,--project-id=${PROJECT_ID},--location=${REGION}" \
   --project=${PROJECT_ID}
 
@@ -41,7 +41,7 @@ echo "🚀 Submitting A2 Lessons Job (28 lessons)..."
 gcloud ai custom-jobs create \
   --region=${REGION} \
   --display-name="${JOB_NAME}-a2" \
-  --worker-pool-spec=machine-type=n1-standard-4,replica-count=1,container-image-uri=${IMAGE_URI} \
+  --worker-pool-spec=machine-type=n1-highmem-4,replica-count=1,container-image-uri=${IMAGE_URI} \
   --args="--cycles=28,--bucket=${BUCKET_NAME},--provider=vertexai:gemini-2.5-pro,--category=a2,--project-id=${PROJECT_ID},--location=${REGION}" \
   --project=${PROJECT_ID}
 
