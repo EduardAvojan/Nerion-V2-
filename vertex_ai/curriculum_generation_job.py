@@ -8,6 +8,7 @@ import argparse
 import os
 import sys
 import signal
+import time
 from pathlib import Path
 from google.cloud import storage
 from nerion_digital_physicist.learning_orchestrator import LearningOrchestrator
@@ -22,12 +23,32 @@ def timeout_handler(signum, frame):
 
 
 def upload_to_gcs(local_path: str, bucket_name: str, blob_name: str):
-    """Upload file to Google Cloud Storage."""
-    storage_client = storage.Client()
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
-    blob.upload_from_filename(local_path)
-    print(f"Uploaded {local_path} to gs://{bucket_name}/{blob_name}")
+    """Upload file to Google Cloud Storage with detailed error handling."""
+    try:
+        print(f"📤 Attempting upload: {local_path} -> gs://{bucket_name}/{blob_name}")
+        storage_client = storage.Client()
+        print(f"   - Storage client initialized")
+        bucket = storage_client.bucket(bucket_name)
+        print(f"   - Bucket reference created: {bucket_name}")
+        blob = bucket.blob(blob_name)
+        print(f"   - Blob reference created: {blob_name}")
+
+        # Check if file exists and get size
+        file_size = Path(local_path).stat().st_size
+        print(f"   - File size: {file_size / 1024:.2f} KB")
+
+        blob.upload_from_filename(local_path)
+        print(f"✅ UPLOADED: {local_path} to gs://{bucket_name}/{blob_name}")
+        return True
+    except FileNotFoundError as e:
+        print(f"❌ UPLOAD FAILED: File not found: {local_path}")
+        print(f"   Error: {e}")
+        return False
+    except Exception as e:
+        print(f"❌ UPLOAD FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 def main():
@@ -90,24 +111,48 @@ def main():
         # Upload checkpoint every 10 cycles to avoid losing progress
         if (i + 1) % 10 == 0:
             db_path = "out/learning/curriculum.sqlite"
+            job_id = os.getenv('CLOUD_ML_JOB_ID') or os.getenv('JOB_ID') or f"manual_{int(time.time())}"
+            print(f"\n{'='*60}")
+            print(f"📦 CHECKPOINT at cycle {i+1}")
+            print(f"   Job ID: {job_id}")
+            print(f"{'='*60}")
+
             if Path(db_path).exists():
-                blob_name = f"curriculum/curriculum_{os.getenv('CLOUD_ML_JOB_ID', 'local')}_checkpoint.sqlite"
-                try:
-                    upload_to_gcs(db_path, args.bucket, blob_name)
-                    print(f"📦 Checkpoint uploaded at cycle {i+1}")
-                except Exception as e:
-                    print(f"⚠️  Checkpoint upload failed: {e}")
+                blob_name = f"curriculum/curriculum_{job_id}_checkpoint_cycle{i+1}.sqlite"
+                success = upload_to_gcs(db_path, args.bucket, blob_name)
+                if success:
+                    print(f"✅ Checkpoint uploaded successfully at cycle {i+1}")
+                else:
+                    print(f"⚠️  Checkpoint upload failed at cycle {i+1} - continuing anyway")
+            else:
+                print(f"⚠️  Database file not found at {db_path} - skipping checkpoint")
 
     print(f"\n{'='*60}")
     print(f"✅ Job Complete: {successful}/{args.cycles} successful")
     print(f"{'='*60}")
 
-    # Upload curriculum database to GCS
+    # Upload final curriculum database to GCS
     db_path = "out/learning/curriculum.sqlite"
+    job_id = os.getenv('CLOUD_ML_JOB_ID') or os.getenv('JOB_ID') or f"manual_{int(time.time())}"
+
+    print(f"\n{'='*60}")
+    print(f"📦 FINAL UPLOAD")
+    print(f"   Job ID: {job_id}")
+    print(f"   Database: {db_path}")
+    print(f"{'='*60}")
+
     if Path(db_path).exists():
-        blob_name = f"curriculum/curriculum_{os.getenv('CLOUD_ML_JOB_ID', 'local')}.sqlite"
-        upload_to_gcs(db_path, args.bucket, blob_name)
-        print(f"📦 Uploaded curriculum to GCS")
+        blob_name = f"curriculum/curriculum_{job_id}_final.sqlite"
+        success = upload_to_gcs(db_path, args.bucket, blob_name)
+        if success:
+            print(f"✅ Final curriculum uploaded to GCS successfully!")
+            print(f"   Location: gs://{args.bucket}/{blob_name}")
+        else:
+            print(f"❌ CRITICAL: Final upload failed - lessons may be lost!")
+            sys.exit(1)
+    else:
+        print(f"❌ CRITICAL: Database file not found at {db_path}!")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
