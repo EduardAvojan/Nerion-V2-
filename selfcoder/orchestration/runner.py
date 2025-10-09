@@ -1,0 +1,886 @@
+"""
+Main orchestration runner functions.
+
+This module contains the core orchestration logic for running actions on files
+and applying plans with pre/post-condition checking and security validation.
+"""
+from __future__ import annotations
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from contextlib import suppress
+import os
+
+from ops.security import fs_guard
+from selfcoder.security.gate import assess_plan
+from selfcoder.scoring import score_plan
+from selfcoder.artifacts import PlanArtifact, save_artifact
+from selfcoder.plans.schema import validate_plan
+from datetime import datetime, timezone
+
+# Import transformers
+from selfcoder.actions.transformers import apply_actions_via_ast
+
+# Import from orchestration package
+from .validators import should_skip as _should_skip, validate_actions as _validate_actions, split_fs_and_ast_actions as _split_fs_and_ast_actions
+from .symbol_analyzer import evaluate_preconditions as _evaluate_preconditions, unresolved_imports_in_file as _unresolved_imports_in_file, REPO_ROOT
+from .test_utils import tests_collect_ok as _tests_collect_ok, causal_from_post_failures as _causal_from_post_failures, predict_impacted_tests
+from .ast_transformer import apply_ast_actions_transactional as _apply_ast_actions_transactional, apply_actions_preview as _apply_actions_preview
+from .diff_preview import unified_diff_for_file as _unified_diff_for_file, preview_bundle as _preview_bundle
+from .healers import run_healers as _run_healers
+from .fs_actions import apply_fs_actions as _apply_fs_actions
+
+# Optional imports
+try:
+    from selfcoder.actions.js_ts import apply_actions_js_ts as _apply_js_ts  # type: ignore
+except Exception:  # pragma: no cover
+    def _apply_js_ts(src: str, actions):  # type: ignore
+        return src
+
+try:
+    from selfcoder.actions.text_patch import preview_unified_diff as _preview_unified_diff
+except Exception:
+    _preview_unified_diff = None  # type: ignore
+
+try:
+    from selfcoder import testgen as _testgen
+except Exception:
+    _testgen = None
+
+try:
+    from selfcoder.tester.expander import expand_tests as _expand_tests
+except Exception:
+    _expand_tests = None
+
+try:
+    from selfcoder.reviewers.reviewer import review_predicted_changes as _review_predicted, format_review as _fmt_review
+except Exception:
+    _review_predicted = None
+    _fmt_review = None
+
+try:
+    from selfcoder.policy.profile_resolver import decide as _decide_profile  # type: ignore
+except Exception:
+    _decide_profile = None  # type: ignore
+
+try:
+    from core.memory.journal import log_event as _log_event  # type: ignore
+except Exception:  # pragma: no cover
+    try:
+        from app import journal as _journal  # type: ignore
+        def _log_event(kind: str, **fields):
+            try:
+                _journal.append({"kind": kind, **fields})
+            except Exception:
+                pass
+    except Exception:
+        def _log_event(*_a, **_kw):
+            return None
+
+# Registry for backward compat
+_TRANSFORMERS: Dict[str, Any] = {}
+
+def run_actions_on_file(path: Path, actions: List[Dict[str, Any]], dry_run: bool = False, *, context: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Read a file, apply AST actions, and write back if changed.
+    Returns True if a write occurred (or would have in dry_run), else False.
+    """
+    p = fs_guard.ensure_in_repo_auto(str(path))
+    if not p.exists():
+        print(f"[MISS] {p.as_posix()} (does not exist)")
+        return False
+
+    skip, reason = _should_skip(p)
+    if skip:
+        print(f"[SKIP] {p.as_posix()} ({reason})")
+        return False
+
+    src = p.read_text(encoding="utf-8")
+    actions = _validate_actions(actions)
+    if not actions:
+        print(f"[NO-OP] {p.as_posix()} (no valid actions)")
+        return False
+
+    # Choose transformer based on file extension
+    ext = p.suffix.lower()
+    if ext in {'.js', '.ts', '.tsx'}:
+        new_src = _apply_js_ts(src, actions)
+    else:
+        new_src = apply_actions_via_ast(src, actions)
+    # Security preflight: assess predicted new content
+    try:
+        result = assess_plan({p.as_posix(): new_src}, fs_guard.infer_repo_root(p))
+        if not result.proceed:
+            print(f"[SECURITY] BLOCK — {result.reason}")
+            for f in result.findings[:20]:
+                print(f" - [{f.severity}] {f.rule_id} {f.filename}:{f.line} — {f.message}")
+            try:
+                _log_event(
+                    "security_block",
+                    reason=result.reason,
+                    findings=[
+                        {
+                            "severity": getattr(f, "severity", ""),
+                            "rule_id": getattr(f, "rule_id", ""),
+                            "filename": getattr(f, "filename", ""),
+                            "line": getattr(f, "line", 0),
+                            "message": getattr(f, "message", ""),
+                        }
+                        for f in result.findings[:20]
+                    ],
+                    file=p.as_posix(),
+                )
+            except Exception:
+                pass
+            return False
+    except Exception:
+        # Fail-open: do not block if the gate itself errors
+        pass
+    if new_src == src:
+        print(f"[NO-OP] {p.as_posix()} (no change needed)")
+        return False
+
+    if dry_run:
+        print(f"[DRYRUN] Would write: {p.as_posix()}")
+        return True
+
+    p.write_text(new_src, encoding="utf-8")
+    print(f"[WRITE] {p.as_posix()}")
+    return True
+
+def run_actions_on_files(paths: List[Path | str], actions: List[Dict[str, Any]], *, dry_run: bool = False) -> List[Path]:
+    """
+    Apply the given actions to each file in paths.
+    Returns a list of Paths for which the file was modified (or would have been in dry_run).
+    """
+    modified_files: List[Path] = []
+    for path in paths:
+        p = fs_guard.ensure_in_repo_auto(str(path))
+        if run_actions_on_file(p, actions, dry_run=dry_run):
+            modified_files.append(p)
+    try:
+        _log_event(
+            "apply_actions",
+            rationale="orchestrator.run_actions_on_files",
+            files=[str(Path(p)) for p in paths],
+            modified=[str(m) for m in modified_files],
+            dry_run=bool(dry_run),
+            actions_count=len(actions or []),
+        )
+    except Exception:
+        pass
+    return modified_files
+
+
+# Helper to apply a planner-produced plan to one or more files.
+def apply_plan(plan: Dict[str, Any], *, dry_run: bool = False, preview: bool = False, healers: List[str] | None = None) -> List[Path]:
+    """
+    Execute a simple planner-produced plan against one or more files.
+
+    Expected plan schema (minimal):
+        {
+            "actions": [ { "kind": "...", "payload": {...} }, ... ],
+            # either
+            "target_file": "path/to/file.py",
+            # or
+            "files": ["a.py", "b.py", ...]
+        }
+
+    Returns the list of Paths that were modified (or would be in dry_run).
+    """
+    if not isinstance(plan, dict):
+        return []
+
+    # Security: validate plan structure (prefer schema, allow legacy fallback), but keep original dict
+    try:
+        validate_plan(plan)
+    except Exception as e:
+        acts = plan.get("actions") if isinstance(plan, dict) else None
+        legacy_ok = isinstance(acts, list) and any(isinstance(a, dict) and (a.get("kind") or a.get("action")) for a in acts)
+        if legacy_ok:
+            print(f"[SECURITY] Legacy plan accepted without schema validation: {e}")
+        else:
+            print(f"[SECURITY] Invalid plan rejected: {e}")
+            return []
+
+    raw_actions = plan.get("actions") or []
+    if not isinstance(raw_actions, list) or not raw_actions:
+        return []
+
+    actions = _validate_actions(raw_actions)
+    fs_actions, diff_actions, ast_actions = _split_fs_and_ast_actions(actions)
+
+    # Gather files from either 'files' or single 'target_file'
+    files_field = plan.get("files")
+    targets: List[Path] = []
+    if isinstance(files_field, list) and files_field:
+        targets = [Path(str(p)) for p in files_field]
+    else:
+        tf = plan.get("target_file")
+        if isinstance(tf, str) and tf:
+            targets = [Path(tf)]
+
+    # Policy: enforce action allow/deny before any writes
+    try:
+        from selfcoder.security.policy import load_policy as _load_pol, enforce_actions as _enf_acts
+        pol = _load_pol(REPO_ROOT)
+        ok_pol, why_pol = _enf_acts(actions, pol)
+        if not ok_pol:
+            print(f"[policy] BLOCK actions: {why_pol}")
+            return []
+    except Exception:
+        pass
+
+    # Optional: preview unified diff for the whole bundle (no writes)
+    if preview:
+        diff_text = _preview_bundle(targets, _validate_actions(raw_actions)) if targets else ""
+        if diff_text:
+            print(diff_text)
+        try:
+            _log_event(
+                "apply_plan_preview",
+                rationale="orchestrator.apply_plan",
+                bundle_id=str(plan.get("bundle_id") or ""),
+                targets=[str(t) for t in targets],
+                actions_count=len(raw_actions or []),
+                diff_bytes=len(diff_text.encode("utf-8")) if diff_text else 0,
+            )
+        except Exception:
+            pass
+        # Do not apply anything when preview is requested
+        return []
+
+    # Evaluate preconditions, if any
+    pc_ok, pc_failures = _evaluate_preconditions(plan.get("preconditions"))
+    if not pc_ok:
+        print("[PRECONDITION] Blocked:")
+        for r in pc_failures:
+            print(f" - {r}")
+        try:
+            _log_event(
+                "precondition_block",
+                rationale="orchestrator.apply_plan",
+                failures=list(pc_failures),
+                bundle_id=str(plan.get("bundle_id") or ""),
+            )
+        except Exception:
+            pass
+        return []
+
+    # Early postcondition guard: if 'no_unresolved_imports' is requested and targets already
+    # have unresolved imports, skip applying edits to avoid churn (keeps file pristine).
+    posts_tokens = plan.get("postconditions") or []
+    if (not dry_run) and any(tok == "no_unresolved_imports" for tok in posts_tokens):
+        try:
+            for t in (targets or []):
+                if _unresolved_imports_in_file(Path(t)):
+                    print("[POSTCONDITION] Unresolved imports present; skipping apply")
+                    return []
+        except Exception:
+            pass
+
+    # Apply file-system actions first (e.g., create_file)
+    created = _apply_fs_actions(fs_actions, targets[0].as_posix() if targets else None, dry_run=dry_run)
+
+    # If no explicit targets were given but FS actions created files, use them
+    if not targets and created:
+        targets = list(created)
+
+    modified: List[Path] = []
+    backups: Dict[Path, str] = {}
+    
+    # Apply unified diff actions next (before AST) to allow text-only fixes
+    if diff_actions:
+        for a in diff_actions:
+            payload = dict(a.get("payload") or {})
+            diff_text = payload.get("diff")
+            if not diff_text and payload.get("diff_file"):
+                try:
+                    p = fs_guard.ensure_in_repo(REPO_ROOT, str(payload.get("diff_file")))
+                    diff_text = Path(p).read_text(encoding="utf-8")
+                except Exception:
+                    diff_text = None
+            if not diff_text:
+                print("[diff] missing diff payload; skipping")
+                continue
+            if _preview_unified_diff is None:
+                print("[diff] unified diff previewer unavailable; skipping")
+                continue
+            try:
+                previews, perr = _preview_unified_diff(diff_text, REPO_ROOT)
+            except Exception as _e:
+                previews, perr = {}, ["parse_failed"]
+            for e in perr or []:
+                print(f"[diff] {e}")
+            if not previews:
+                continue
+            predicted = {p.as_posix(): new for p, (_old, new) in previews.items()}
+            # Policy: enforce path/limits for predicted changes
+            try:
+                from selfcoder.security.policy import load_policy as _load_pol, enforce_paths as _enf_paths, enforce_limits as _enf_limits
+                pol = _load_pol(REPO_ROOT)
+                rels = []
+                for k in predicted.keys():
+                    p = Path(k)
+                    try:
+                        rel = p.relative_to(REPO_ROOT)
+                    except Exception:
+                        rel = p
+                    rels.append(rel)
+                okp, why, viol = _enf_paths(rels, pol)
+                if not okp:
+                    print(f"[policy] BLOCK paths: {why} — {[v.as_posix() for v in viol]}")
+                    continue
+                okL, whyL = _enf_limits(predicted, pol)
+                if not okL:
+                    print(f"[policy] BLOCK limits: {whyL}")
+                    continue
+            except Exception:
+                pass
+            # Security preflight for changed files
+            try:
+                result = assess_plan(predicted, REPO_ROOT, plan_actions=actions)
+                if not result.proceed:
+                    print("[SECURITY] BLOCK (diff) — " + str(result.reason))
+                    continue
+            except Exception:
+                pass
+            # Reviewer gating (preview only)
+            blocked = False
+            try:
+                rep = _review_predicted(predicted, REPO_ROOT)
+                # Auto profile hint (non-invasive)
+                try:
+                    if _decide_profile:
+                        style_hints = sum(len(v or []) for v in (rep.get('style') or {}).values())
+                        sec_count = int(((rep.get('security') or {}).get('findings') and len((rep.get('security') or {}).get('findings'))) or 0)
+                        files_count = len(previews)
+                        delta_bytes = 0
+                        for _p, (old, new) in previews.items():
+                            try:
+                                delta_bytes += (len(new) - len(old))
+                            except Exception:
+                                pass
+                        kinds_ast_only = False
+                        has_rename = any((a.get('kind') or a.get('action')) == 'rename_symbol' for a in (actions or []))
+                        dec = _decide_profile('apply_plan', preview=predicted, signals={
+                            'security_findings': sec_count,
+                            'style_hints': style_hints,
+                            'files_count': files_count,
+                            'delta_bytes': delta_bytes,
+                            'kinds_ast_only': kinds_ast_only,
+                            'has_rename': has_rename,
+                        })
+                        if dec and dec.name:
+                            print(f"[profile] hint: {dec.name} ({dec.why})")
+                except Exception:
+                    pass
+                strict = (os.getenv('NERION_REVIEW_STRICT') or '').strip().lower() in {'1','true','yes','on'}
+                try:
+                    from selfcoder.config import get_policy as _get_policy
+                    _pol = _get_policy()
+                except Exception:
+                    _pol = 'balanced'
+                if strict or _pol == 'safe':
+                    if (not rep.get('security', {}).get('proceed', True)):
+                        print("[review] strict/safe: blocking diff due to security findings")
+                        blocked = True
+                # Optional style thresholds
+                try:
+                    style_max = os.getenv('NERION_REVIEW_STYLE_MAX')
+                    if style_max is not None and str(style_max).strip() != '':
+                        try:
+                            limit = int(style_max)
+                        except Exception:
+                            limit = -1
+                        if limit >= 0:
+                            total_hints = sum(len(v or []) for v in (rep.get('style') or {}).values())
+                            if total_hints > limit:
+                                print(f"[review] blocking diff: style_hints {total_hints} > limit {limit}")
+                                blocked = True
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            if blocked:
+                continue
+            # Write or dry-run (apply profile scoped if resolver recommends)
+            _profile_scope = None
+            try:
+                if _decide_profile:
+                    dec2 = _decide_profile('apply_plan', preview=predicted, signals={'security_findings': 0, 'files_count': len(previews), 'delta_bytes': 0, 'kinds_ast_only': False})
+                    from selfcoder.policy.profile_resolver import apply_env_scoped as _apply_env_scoped  # type: ignore
+                    _profile_scope = _apply_env_scoped(dec2)
+            except Exception:
+                _profile_scope = None
+            try:
+                for p, (old, new) in previews.items():
+                    if new == old:
+                        continue
+                    if dry_run:
+                        print(f"[DRYRUN] Would patch: {p.as_posix()}")
+                        modified.append(p)
+                        continue
+                    try:
+                        backups[p] = old
+                        p.write_text(new, encoding="utf-8")
+                        print(f"[WRITE] {p.as_posix()}")
+                        modified.append(p)
+                    except Exception as e:
+                        print(f"[ERR] diff write failed for {p.as_posix()}: {e}")
+            finally:
+                if _profile_scope and hasattr(_profile_scope, '__exit__'):
+                    try:
+                        _profile_scope.__exit__(None, None, None)
+                    except Exception:
+                        pass
+    if ast_actions and targets:
+        # Pre-apply Reviewer (preview only; do not write yet)
+        try:
+            previews = _apply_actions_preview(targets, ast_actions)
+            predicted = {p.as_posix(): new for p, (_old, new) in previews.items()}
+            if predicted:
+                rep = _review_predicted(predicted, REPO_ROOT)
+                print("[review]\n" + _fmt_review(rep))
+                # Auto profile hint (non-invasive)
+                try:
+                    if _decide_profile:
+                        style_hints = sum(len(v or []) for v in (rep.get('style') or {}).values())
+                        sec_count = int(((rep.get('security') or {}).get('findings') and len((rep.get('security') or {}).get('findings'))) or 0)
+                        files_count = len(previews)
+                        delta_bytes = 0
+                        for _p, (old, new) in previews.items():
+                            try:
+                                delta_bytes += (len(new) - len(old))
+                            except Exception:
+                                pass
+                        kinds_ast_only = True
+                        has_rename = any((a.get('kind') or a.get('action')) == 'rename_symbol' for a in (ast_actions or []))
+                        dec = _decide_profile('apply_plan', preview=predicted, signals={
+                            'security_findings': sec_count,
+                            'style_hints': style_hints,
+                            'files_count': files_count,
+                            'delta_bytes': delta_bytes,
+                            'kinds_ast_only': kinds_ast_only,
+                            'has_rename': has_rename,
+                        })
+                        if dec and dec.name:
+                            print(f"[profile] hint: {dec.name} ({dec.why})")
+                except Exception:
+                    pass
+                strict = (os.getenv('NERION_REVIEW_STRICT') or '').strip().lower() in {'1','true','yes','on'}
+                # Policy-profiles: default behaviors if env thresholds are unset
+                try:
+                    from selfcoder.config import get_policy as _get_policy
+                    _pol = _get_policy()
+                except Exception:
+                    _pol = 'balanced'
+                if strict or _pol == 'safe':
+                    # In safe mode, block on any security finding and enforce style_max=0 by default
+                    if (not rep.get('security', {}).get('proceed', True)):
+                        print("[review] strict/safe: blocking due to security findings")
+                        return []
+                    if (os.getenv('NERION_REVIEW_STYLE_MAX') or '').strip() == '':
+                        total_hints = sum(len(v or []) for v in (rep.get('style') or {}).values())
+                        if total_hints > 0:
+                            print("[review] safe: blocking due to style hints > 0")
+                            return []
+                if strict and (not rep.get('security', {}).get('proceed', True)):
+                    print("[review] strict mode: blocking apply due to security findings")
+                    return []
+                # Optional style/external gating via env thresholds
+                try:
+                    style_max = os.getenv('NERION_REVIEW_STYLE_MAX')
+                    if style_max is not None and str(style_max).strip() != '':
+                        try:
+                            limit = int(style_max)
+                        except Exception:
+                            limit = -1
+                        if limit >= 0:
+                            total_hints = sum(len(v or []) for v in (rep.get('style') or {}).values())
+                            if total_hints > limit:
+                                print(f"[review] blocking: style_hints {total_hints} > limit {limit}")
+                                return []
+                    ext = rep.get('external') or {}
+                    def _exceeds(name: str, env_key: str) -> bool:
+                        v = os.getenv(env_key)
+                        if v is None or str(v).strip() == '':
+                            return False
+                        try:
+                            limit = int(v)
+                        except Exception:
+                            return False
+                        count = int(((ext.get(name) or {}).get('count')) or 0)
+                        return (limit >= 0) and (count > limit)
+                    if _exceeds('ruff', 'NERION_REVIEW_RUFF_MAX'):
+                        print("[review] blocking: ruff issues exceed NERION_REVIEW_RUFF_MAX")
+                        return []
+                    if _exceeds('pydocstyle', 'NERION_REVIEW_PYDOCSTYLE_MAX'):
+                        print("[review] blocking: pydocstyle issues exceed NERION_REVIEW_PYDOCSTYLE_MAX")
+                        return []
+                    if _exceeds('mypy', 'NERION_REVIEW_MYPY_MAX'):
+                        print("[review] blocking: mypy issues exceed NERION_REVIEW_MYPY_MAX")
+                        return []
+                except Exception:
+                    # Never block on threshold parsing errors
+                    pass
+        except Exception:
+            pass
+        # Apply AST actions under a scoped profile if recommended
+        _profile_scope = None
+        try:
+            if _decide_profile:
+                dec2 = _decide_profile('apply_plan', preview={}, signals={'security_findings': 0, 'files_count': len(targets), 'delta_bytes': 0, 'kinds_ast_only': True})
+                from selfcoder.policy.profile_resolver import apply_env_scoped as _apply_env_scoped  # type: ignore
+                _profile_scope = _apply_env_scoped(dec2)
+        except Exception:
+            _profile_scope = None
+        try:
+            modified, backups = _apply_ast_actions_transactional(targets, ast_actions, dry_run=dry_run)
+        finally:
+            if _profile_scope and hasattr(_profile_scope, '__exit__'):
+                try:
+                    _profile_scope.__exit__(None, None, None)
+                except Exception:
+                    pass
+    else:
+        # No AST actions to apply; preserve any modifications from diff/fs stages
+        pass
+
+    # Optional: run conservative healers before postconditions, included in rollback scope
+    healer_report = None
+    if not dry_run and healers:
+        # If no AST edits happened, allow explicit healers to run over the targets
+        candidates = list({*(modified or []), *(created or []), *(targets or [])})
+        if candidates:
+            # Ensure any healer writes are covered by backups
+            for p in candidates:
+                if p not in backups:
+                    try:
+                        backups[p] = p.read_text(encoding="utf-8")
+                    except Exception:
+                        pass
+            healer_report = _run_healers(candidates, list(healers))
+
+    # Evaluate postconditions over touched files
+    touched = list({*(modified or []), *(created or [])})
+    posts = plan.get("postconditions") or []
+    # Allow disabling postconditions (e.g., in environments without deps installed)
+    if os.getenv("NERION_DISABLE_POSTCONDS"):
+        posts = []
+    post_failures: List[str] = []
+    if posts and not dry_run:
+        # Consider also original targets for checks (in case no writes occurred)
+        paths_for_post = list({*touched, *[Path(t) for t in (targets or [])]})
+        for token in posts:
+            if token == "no_unresolved_imports":
+                for p in paths_for_post:
+                    unresolved = _unresolved_imports_in_file(p)
+                    if unresolved:
+                        post_failures.append(f"{p.as_posix()}: {', '.join(unresolved)}")
+            elif token == "tests_collect":
+                if not _tests_collect_ok():
+                    post_failures.append("tests did not collect")
+            elif token in {"eslint_clean", "tsc_ok"}:
+                try:
+                    from selfcoder.security import extlinters as _ext
+                    # Convert to repo-relative paths when possible
+                    root = Path.cwd()
+                    rels = []
+                    for p in paths_for_post:
+                        try:
+                            rel = p.relative_to(root)
+                        except Exception:
+                            rel = p
+                        rels.append(rel)
+                    findings = _ext.run_on_dir(root, rels)
+                    if token == "eslint_clean" and any(f.get('tool') == 'eslint' for f in findings or []):
+                        post_failures.append("eslint violations present")
+                    if token == "tsc_ok" and any(f.get('tool') == 'tsc' for f in findings or []):
+                        post_failures.append("tsc reported type errors")
+                except Exception:
+                    # If tools unavailable, do not fail postconditions
+                    pass
+            else:
+                # Unknown token -> ignore
+                continue
+        if post_failures:
+            print("[POSTCONDITION] Failing; rolling back edits")
+            # Roll back AST edits only (robust to path normalization)
+            try:
+                bk_map = {str(Path(k).resolve()): v for k, v in backups.items()}
+            except Exception:
+                bk_map = {str(k): v for k, v in backups.items()}
+            # Restore exactly the files we backed up (robust to path representation)
+            for key, text in bk_map.items():
+                with suppress(Exception):
+                    Path(key).write_text(text, encoding="utf-8")
+            # Log event
+            try:
+                _log_event(
+                    "postcondition_rollback",
+                    rationale="orchestrator.apply_plan",
+                    failures=list(post_failures),
+                    bundle_id=str(plan.get("bundle_id") or ""),
+                    touched=[str(t) for t in touched],
+                )
+            except Exception:
+                pass
+            # Build and save a failure artifact with a causal chain for easier diagnosis
+            try:
+                causal = _causal_from_post_failures(posts, post_failures)
+                score, why = score_plan(plan, None)
+                artifact = PlanArtifact(
+                    ts=datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),
+                    origin="orchestrator.apply_plan",
+                    score=score,
+                    rationale=why,
+                    plan=plan,
+                    files_touched=[str(x) for x in (touched or [])],
+                    sim=None,
+                    meta={
+                        "dry_run": bool(dry_run),
+                        "bundle_id": plan.get("bundle_id"),
+                        "has_pre": bool(plan.get("preconditions")),
+                        "has_post": bool(plan.get("postconditions")),
+                        "preview": bool(preview),
+                        "healers": healer_report or None,
+                        "actions_count": len(actions or []),
+                        "targets_count": len(targets or []),
+                        "modified_count": len(modified or []),
+                        "created_count": len(created or []),
+                        "touched_count": len(touched or []),
+                        "postconditions": {
+                            "checked": list(posts or []),
+                            "failures": list(post_failures or []),
+                            "status": "failed",
+                        },
+                        "causal_chain": causal,
+                    },
+                )
+                save_artifact(artifact)
+            except Exception:
+                pass
+            return []
+
+    # If we actually changed files (and not just preview), reload plugins so newly added/updated tools are live
+    if (modified or created) and not dry_run:
+        try:
+            from plugins.loader import reload_plugins_auto as _reload_plugins_auto
+            _reload_plugins_auto()
+        except Exception:
+            pass
+    try:
+        _log_event(
+            "apply_plan",
+            rationale="orchestrator.apply_plan",
+            dry_run=bool(dry_run),
+            targets=[str(t) for t in targets],
+            modified=[str(m) for m in modified],
+            created=[str(c) for c in created],
+            actions_count=len(actions or []),
+        )
+    except Exception:
+        pass
+
+    # --- Test impact guidance (opt-in via NERION_TEST_IMPACT=1) ---
+    try:
+        _TI = (os.getenv('NERION_TEST_IMPACT') or '').strip().lower() in {'1','true','yes','on'}
+    except Exception:
+        _TI = False
+    if (not dry_run) and _TI:
+        try:
+            impacted = _predict_impacted_tests(modified or created)
+            if not impacted:
+                # Scaffold a minimal generated test for the first target
+                tgt = str(targets[0]) if targets else None
+                if tgt:
+                    try:
+                        code = _testgen.generate_tests_for_plan(plan, tgt)
+                        out_dir = Path('selfcoder/tests/generated')
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        out_path = out_dir / f"test_auto_{Path(tgt).stem}.py"
+                        _testgen.write_test_file(code, out_path)
+                        print(f"[impact] scaffolded: {out_path}")
+                        impacted = [out_path]
+                    except Exception:
+                        impacted = []
+            # Optional Tester expansion (NERION_TESTER=1)
+            try:
+                _TE = (os.getenv('NERION_TESTER') or '').strip().lower() in {'1','true','yes','on'}
+            except Exception:
+                _TE = False
+            if _TE:
+                tgt = str(targets[0]) if targets else None
+                if tgt:
+                    try:
+                        edge_code = _expand_tests(plan, tgt)
+                        out_dir = Path('selfcoder/tests/generated')
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        edge_path = out_dir / f"test_edge_{Path(tgt).stem}.py"
+                        _testgen.write_test_file(edge_code, edge_path)
+                        print(f"[impact] tester expanded: {edge_path}")
+                        impacted = ([edge_path] + (impacted or [])) if impacted else [edge_path]
+                    except Exception:
+                        pass
+            if impacted:
+                print(f"[impact] running {len(impacted)} impacted test file(s)…")
+                rc_imp = _testgen.run_pytest_on_paths(impacted)
+                print(f"[impact] impacted tests exit code: {rc_imp}")
+            smoke_dirs = [p for p in [Path('tests'), Path('selfcoder/tests')] if p.exists()]
+            if smoke_dirs:
+                print("[impact] running smoke suite…")
+                rc_smoke = _testgen.run_pytest_on_paths(smoke_dirs)
+                print(f"[impact] smoke exit code: {rc_smoke}")
+        except Exception as _e:
+            print(f"[impact] skipped due to error: {_e}")
+    # --- Score plan and log artifact ---
+    try:
+        score, why = score_plan(plan, None)
+        artifact = PlanArtifact(
+            ts=datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),
+            origin="orchestrator.apply_plan",
+            score=score,
+            rationale=why,
+            plan=plan,
+            files_touched=[str(x) for x in (modified or created or [])],
+            sim=None,
+            meta={
+                "dry_run": bool(dry_run),
+                "bundle_id": plan.get("bundle_id"),
+                "has_pre": bool(plan.get("preconditions")),
+                "has_post": bool(plan.get("postconditions")),
+                "preview": bool(preview),
+                "healers": healer_report or None,
+                # Counts and summaries
+                "actions_count": len(actions or []),
+                "targets_count": len(targets or []),
+                "modified_count": len(modified or []),
+                "created_count": len(created or []),
+                "touched_count": len(touched or []),
+                "postconditions": {
+                    "checked": list(posts or []),
+                    "failures": list(post_failures or []),
+                    "status": "ok" if not (posts and post_failures) else "failed",
+                },
+            },
+        )
+        save_artifact(artifact)
+    except Exception:
+        pass
+    return modified or created
+
+__all__ = [
+    "apply_actions_via_ast",
+    "_TRANSFORMERS",
+    "run_actions_on_file",
+    "run_actions_on_files",
+    "apply_plan",
+    # Legacy exports for backward compatibility
+    "run_ast_actions",
+    "dry_run_orchestrate",
+    "Orchestrator",
+    "OrchestrateResult",
+]
+
+
+# Backwards compatibility exports (functional shims)
+@dataclass(frozen=True)
+class OrchestrateResult:
+    modified_files: List[Path]
+    in_file_edits: int
+    crossfile_edits: int
+
+def run_ast_actions(src: str, actions: List[Dict[str, Any]] | None = None) -> str:
+    """Legacy alias for apply_actions_via_ast (kept for older callers)."""
+    return apply_actions_via_ast(src, actions or [])
+
+
+def dry_run_orchestrate(src: str, actions: List[Dict[str, Any]] | None = None) -> str:
+    """Legacy dry-run helper that simply calls run_ast_actions."""
+    return run_ast_actions(src, actions)
+
+
+class Orchestrator:
+    """Minimal orchestrator preserved for backward compatibility.
+
+    Applies in-file AST actions to files and (optionally) writes the results
+    when `preview` is False. Cross-file operations are not implemented in this
+    shim; callers requiring them should use newer utilities.
+    """
+
+    def __init__(self, actions: List[Dict[str, Any]] | None = None) -> None:
+        self.actions: List[Dict[str, Any]] = list(actions or [])
+
+    @staticmethod
+    def apply_plan(plan: Dict[str, Any], *, dry_run: bool = False) -> List[Path]:
+        """Compatibility shim: delegate to module-level apply_plan."""
+        return apply_plan(plan, dry_run=dry_run)
+
+    def apply_in_file(self, source: str) -> Tuple[str, int]:
+        new_src = apply_actions_via_ast(source, self.actions)
+        known = sum(
+            1 for a in self.actions if isinstance(a, dict) and a.get("kind") in _TRANSFORMERS
+        )
+        return new_src, known
+
+    def orchestrate_files(
+        self,
+        files: List[Path],
+        root: Path | None = None,
+        preview: bool = True,
+    ) -> OrchestrateResult:
+        modified: List[Path] = []
+        in_file_count = 0
+
+        for p in files:
+            jp = fs_guard.ensure_in_repo_auto(str(p))
+            try:
+                text = jp.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            new_text, n = self.apply_in_file(text)
+            in_file_count += int(n)
+            if new_text != text:
+                try:
+                    if not preview:
+                        jp.write_text(new_text, encoding="utf-8")
+                    modified.append(jp)
+                except Exception:
+                    # Ignore write errors at this layer
+                    pass
+
+        # Cross-file not supported in this shim; report zero.
+        return OrchestrateResult(
+            modified_files=modified,
+            in_file_edits=in_file_count,
+            crossfile_edits=0,
+        )
+
+
+
+def _normalize_actions_for_apply(actions):
+    norm = []
+    for a in actions or []:
+        if not isinstance(a, dict):
+            continue
+        a = dict(a)
+        if 'kind' not in a and 'action' in a:
+            a['kind'] = a.pop('action')
+        payload = dict(a.get('payload') or {})
+        if 'doc' not in payload and 'docstring' in payload:
+            payload['doc'] = payload.pop('docstring')
+        a['payload'] = payload
+        norm.append(a)
+    return norm
+def run_batch_actions_on_files(files, actions, dry_run=False):
+    from pathlib import Path
+    changed = []
+    for f in files or []:
+        fp = Path(f)
+        try:
+            if run_actions_on_file(fp, _normalize_actions_for_apply(actions), dry_run=bool(dry_run)):
+                changed.append(str(fp))
+        except Exception:
+            pass
+    return changed

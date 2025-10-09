@@ -34,6 +34,7 @@ SKIP_COMPONENT_PARTS: Set[str] = {
     ".venv",
     "venv",
     "env",
+    "backups",
 }
 GIT_FIX_KEYWORDS: Tuple[str, ...] = ("fix", "bug", "regress", "hotfix", "patch", "repair")
 JS_IMPORT_RE = re.compile(r"import\s+(?:[\w*{}$,\s]+\s+from\s+)?[\"\']([^\"\']+)[\"\']", re.MULTILINE)
@@ -331,33 +332,37 @@ def _discover_components(root: Path) -> Set[str]:
 
 
 def _scan_sources(root: Path, known_components: Set[str], component_data: Dict[str, Dict[str, Any]]) -> None:
-    for path in root.rglob('*'):
-        if not path.is_file():
-            continue
-        if path.suffix not in SOURCE_SUFFIXES:
-            continue
-        try:
-            relative = path.relative_to(root)
-        except ValueError:
-            continue
-        if any(part in SKIP_COMPONENT_PARTS for part in relative.parts):
-            continue
-        comp = _component_for_parts(relative.parts, known_components)
-        if not comp:
-            continue
-        entry = component_data.setdefault(comp, _empty_component_entry())
-        rel_str = relative.as_posix()
-        if rel_str not in entry["files"]:
-            entry["files"].append(rel_str)
-        text = _read_text(path)
-        entry["loc"] += text.count('\n') + 1 if text else 0
-        internal, external = _extract_dependencies(path, text, comp, known_components)
-        if internal:
-            entry["dependencies"].update(internal)
-            for dep in internal:
-                entry["dependency_sources"].setdefault(dep, set()).add(rel_str)
-        if external:
-            entry["external_dependencies"].update(external)
+    import os
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Filter out directories we want to skip (modifies dirnames in-place)
+        dirnames[:] = [d for d in dirnames if d not in SKIP_COMPONENT_PARTS]
+
+        for filename in filenames:
+            path = Path(dirpath) / filename
+            if path.suffix not in SOURCE_SUFFIXES:
+                continue
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                continue
+            if any(part in SKIP_COMPONENT_PARTS for part in relative.parts):
+                continue
+            comp = _component_for_parts(relative.parts, known_components)
+            if not comp:
+                continue
+            entry = component_data.setdefault(comp, _empty_component_entry())
+            rel_str = relative.as_posix()
+            if rel_str not in entry["files"]:
+                entry["files"].append(rel_str)
+            text = _read_text(path)
+            entry["loc"] += text.count('\n') + 1 if text else 0
+            internal, external = _extract_dependencies(path, text, comp, known_components)
+            if internal:
+                entry["dependencies"].update(internal)
+                for dep in internal:
+                    entry["dependency_sources"].setdefault(dep, set()).add(rel_str)
+            if external:
+                entry["external_dependencies"].update(external)
 
 
 def _extract_dependencies(
