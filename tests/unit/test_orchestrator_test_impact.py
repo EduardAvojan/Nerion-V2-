@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import selfcoder.orchestrator as orch
+import selfcoder.orchestration.runner as runner
 
 
 def test_test_impact_with_tester_expansion(monkeypatch, tmp_path):
@@ -23,7 +24,7 @@ def test_test_impact_with_tester_expansion(monkeypatch, tmp_path):
     monkeypatch.setenv("NERION_TESTER", "1")
 
     # Force no initially impacted tests to trigger scaffolding path
-    monkeypatch.setattr(orch, "_predict_impacted_tests", lambda *_a, **_k: [], raising=False)
+    monkeypatch.setattr(runner, "_predict_impacted_tests", lambda *_a, **_k: [], raising=False)
 
     # Capture writes and pytest runs
     writes = []
@@ -37,8 +38,8 @@ def test_test_impact_with_tester_expansion(monkeypatch, tmp_path):
         runs.extend([str(p) for p in paths])
         return 0
 
-    monkeypatch.setattr(orch._testgen, "write_test_file", _fake_write, raising=False)
-    monkeypatch.setattr(orch._testgen, "run_pytest_on_paths", _fake_run, raising=False)
+    monkeypatch.setattr(runner._testgen, "write_test_file", _fake_write, raising=False)
+    monkeypatch.setattr(runner._testgen, "run_pytest_on_paths", _fake_run, raising=False)
 
     # Apply the plan (in-repo path); should not raise
     _ = orch.apply_plan(plan, dry_run=False, preview=False)
