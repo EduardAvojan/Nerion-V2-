@@ -11,7 +11,7 @@ import os
 
 # We reference the top-level CLI helpers for simulation and rollback.
 try:
-    # These are defined in selfcoder/cli.py
+    # These are defined in selfcoder/cli package
     from selfcoder.cli import _maybe_simulate, _apply_with_rollback  # type: ignore
 except Exception:  # pragma: no cover - defensive import
     _maybe_simulate = None

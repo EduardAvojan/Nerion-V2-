@@ -37,7 +37,8 @@ def setup_test_project(root_path: Path):
     (project_dir / "app" / "__init__.py").touch()
     
     # Copy real files from the actual project source
-    shutil.copy(PROJECT_ROOT / "selfcoder/cli.py", selfcoder_dir / "cli.py")
+    # cli is now a package, not a single file
+    shutil.copytree(PROJECT_ROOT / "selfcoder/cli", selfcoder_dir / "cli", dirs_exist_ok=True)
     shutil.copy(PROJECT_ROOT / "selfcoder/simulation.py", selfcoder_dir / "simulation.py")
     shutil.copy(PROJECT_ROOT / "selfcoder/actions/crossfile.py", selfcoder_dir / "actions" / "crossfile.py")
 
