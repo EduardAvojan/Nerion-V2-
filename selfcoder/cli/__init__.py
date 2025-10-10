@@ -31,6 +31,9 @@ from .fallbacks import (
 )
 from .autotest import cmd_autotest
 
+# Import for test compatibility (tests may monkeypatch this)
+from selfcoder.planner.prioritizer import build_planner_context
+
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Main CLI entry point."""

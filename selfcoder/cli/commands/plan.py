@@ -17,7 +17,8 @@ from ops.telemetry.logger import log
 from datetime import datetime, timezone
 from selfcoder.scoring import score_plan
 from selfcoder.artifacts import PlanArtifact, SimResult, save_artifact
-from selfcoder.planner.prioritizer import build_planner_context
+# Import from cli module for test compatibility (tests may monkeypatch this)
+import selfcoder.cli as cli_module
 from selfcoder.planner.apply_policy import (
     apply_allowed,
     evaluate_apply_policy,
@@ -243,7 +244,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     plan: dict
     brief_context = None
     try:
-        brief_context = build_planner_context(
+        brief_context = cli_module.build_planner_context(
             args.instruction,
             target_file=str(args.file) if args.file else None,
         )

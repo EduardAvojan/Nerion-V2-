@@ -278,8 +278,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Load plugin-based commands if plugin system is present
     try:
-        if _load_plugins is not None:
-            _load_plugins()  # type: ignore[misc]
+        # Load plugins into the registries if not already loaded
+        if _load_plugins is not None and _xf_reg is not None and _cli_reg is not None:
+            try:
+                import os
+                plugins_dir = os.getenv("NERION_PLUGINS_DIR", "plugins")
+                _load_plugins(_xf_reg, _cli_reg, plugins_dir=plugins_dir)
+            except Exception:
+                # Plugins may already be loaded or may fail to load; continue anyway
+                pass
+        # Extend parser with any registered CLI extensions
         if _cli_reg is not None:
             try:
                 _cli_reg.extend_parser(sub)
