@@ -180,6 +180,16 @@ def _run_epoch(model, loader, pool_fn, optimizer=None):
 
 
 def train_model(config: TrainingConfig) -> Dict[str, object]:
+    # Set all random seeds for reproducibility
+    torch.manual_seed(config.seed)
+    torch.cuda.manual_seed_all(config.seed)
+    import numpy as np
+    import random
+    np.random.seed(config.seed)
+    random.seed(config.seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     samples = _load_samples(config.dataset_path)
     dataset = GraphSampleDataset(samples)
 
@@ -235,7 +245,7 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
     best_snapshot: dict[str, object] | None = None
     best_val_metric = float("-inf")
     epochs_since_improvement = 0
-    patience = max(5, int(config.epochs * 0.1))
+    patience = max(10, int(config.epochs * 0.2))
 
     for epoch in range(1, config.epochs + 1):
         train_loss, train_acc, _ = _run_epoch(model, train_loader, pool_fn, optimizer)
@@ -259,7 +269,9 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
                 f"val_f1={val_metrics.get('f1', float('nan')):.3f}"
             )
 
-        current_val_metric = val_acc
+        # Use AUC as primary metric (more stable), fallback to accuracy if AUC is NaN
+        val_auc = val_metrics.get("auc", float("nan"))
+        current_val_metric = val_auc if not math.isnan(val_auc) else val_acc
         if current_val_metric > best_val_metric:
             best_val_metric = current_val_metric
             best_snapshot = {
