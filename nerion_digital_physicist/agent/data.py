@@ -159,7 +159,7 @@ def get_node_features(node_name: str, graph: nx.DiGraph) -> List[float]:
             ]
         )
     else:
-        features.extend([0.0] * 12)
+        features.extend([0.0] * 13)
 
     return features
 
@@ -263,7 +263,7 @@ def _featurize_graph(
         node_features.append(base_features)
 
     if not node_features:
-        total_dim = 16 + embedding_dim
+        total_dim = 17 + embedding_dim
         return torch.zeros((0, total_dim), dtype=torch.float)
 
     return torch.tensor(node_features, dtype=torch.float)

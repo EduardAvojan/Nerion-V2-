@@ -272,3 +272,23 @@ class CurriculumStore:
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
         finally:
             cursor.close()
+
+    def get_all_bug_fixes(self) -> List[Dict[str, Any]]:
+        """
+        Get all bug fixes from the database.
+
+        Returns:
+            List of bug fix dictionaries
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT name, description, focus_area, before_code, after_code, test_code, timestamp
+                FROM bug_fixes
+                ORDER BY timestamp DESC
+            """)
+
+            columns = [description[0] for description in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        finally:
+            cursor.close()

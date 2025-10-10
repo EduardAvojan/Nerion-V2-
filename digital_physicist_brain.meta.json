@@ -1,16 +1,16 @@
 {
-  "architecture": "gcn",
+  "architecture": "gin",
   "attention_heads": 4,
-  "best_epoch": 7,
-  "best_val_accuracy": 0.7517241379310344,
-  "best_val_auc": 0.8218500190331176,
-  "best_val_f1": 0.7391304347826086,
+  "best_epoch": 10,
+  "best_val_accuracy": 0.631578947368421,
+  "best_val_auc": 0.6744661517492049,
+  "best_val_f1": 0.6141732283464567,
   "dropout": 0.2,
   "hidden_channels": 256,
   "num_layers": 4,
   "num_node_features": 33,
   "pooling": "mean",
   "residual": false,
-  "run_dir": "out/training_runs/supervised/20251005T202437Z",
-  "trained_at": "2025-10-05T20:24:37.059814+00:00"
+  "run_dir": "out/training_runs/supervised/20251010T051500Z",
+  "trained_at": "2025-10-10T05:15:00.124779+00:00"
 }

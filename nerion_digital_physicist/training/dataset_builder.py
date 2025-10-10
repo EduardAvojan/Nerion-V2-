@@ -65,16 +65,20 @@ def build_before_after_graphs(lessons: Iterable[sqlite3.Row]) -> List[Data]:
             before = create_graph_data_from_source(
                 str(lesson["before_code"]), embedder=embedder
             )
-            graphs.append(
-                _annotate_graph(before, label=0, lesson=name, sample_type="before")
-            )
+            # Skip empty graphs (no nodes)
+            if before.num_nodes > 0:
+                graphs.append(
+                    _annotate_graph(before, label=0, lesson=name, sample_type="before")
+                )
 
             after = create_graph_data_from_source(
                 str(lesson["after_code"]), embedder=embedder
             )
-            graphs.append(
-                _annotate_graph(after, label=1, lesson=name, sample_type="after")
-            )
+            # Skip empty graphs (no nodes)
+            if after.num_nodes > 0:
+                graphs.append(
+                    _annotate_graph(after, label=1, lesson=name, sample_type="after")
+                )
         except Exception as exc:  # pragma: no cover - defensive logging
             print(f" - Skipping lesson '{name}' due to graph extraction error: {exc}")
             continue
