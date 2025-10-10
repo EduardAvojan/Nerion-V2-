@@ -38,12 +38,24 @@ def _apply_with_rollback(snapshot_message: str, apply_fn, check_fn=None) -> bool
     If apply_fn raises or check_fn returns False, restore the snapshot and return False.
     Returns True on success.
     """
-    ts = git_ops.snapshot(snapshot_message)
+    ts_raw = git_ops.snapshot(snapshot_message)
+    # Normalize snapshot token to a string for restore_snapshot
+    # In SAFE mode, snapshot returns a list of files - we can't restore from this
+    ts_is_safe_mode = isinstance(ts_raw, (list, tuple))
+    if ts_is_safe_mode:
+        ts = ts_raw[0] if ts_raw else ""
+    elif isinstance(ts_raw, dict):
+        ts = ts_raw.get("ts") or ts_raw.get("timestamp") or next(iter(ts_raw.values()), None)
+    else:
+        ts = ts_raw
+    ts = str(ts)
+
     try:
         _ok_apply = bool(apply_fn())
     except Exception as exc:
         print(f"[apply] failed during apply: {exc}", file=sys.stderr)
-        git_ops.restore_snapshot(snapshot_ts=ts)
+        if not ts_is_safe_mode and ts:
+            git_ops.restore_snapshot(snapshot_ts=ts)
         return False
 
     ok = True
@@ -54,7 +66,7 @@ def _apply_with_rollback(snapshot_message: str, apply_fn, check_fn=None) -> bool
             ok = False
             print(f"[check] failed to run: {exc}", file=sys.stderr)
 
-    if not ok:
+    if not ok and not ts_is_safe_mode and ts:
         git_ops.restore_snapshot(snapshot_ts=ts)
     return ok
 
