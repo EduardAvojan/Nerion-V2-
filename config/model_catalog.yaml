@@ -34,6 +34,40 @@ api_providers:
         text-embedding-004:
           roles: [embeddings]
           dimensionality: 768
+    anthropic:
+      endpoint: https://api.anthropic.com/v1
+      key_env: ANTHROPIC_API_KEY
+      models:
+        claude-sonnet-4-5-20250929:
+          roles: [chat, code, planner]
+          max_output_tokens: 64000
+          supports_structured_output: true
+          supports_tools: true
+          multimodal: true
+        claude-sonnet-4-20250514:
+          roles: [chat, code, planner]
+          max_output_tokens: 64000
+          supports_structured_output: true
+          supports_tools: true
+          multimodal: true
+        claude-3-7-sonnet-20250219:
+          roles: [chat, code, planner]
+          max_output_tokens: 64000
+          supports_structured_output: true
+          supports_tools: true
+          multimodal: true
+        claude-opus-4-1-20250805:
+          roles: [chat, code, planner]
+          max_output_tokens: 32000
+          supports_structured_output: true
+          supports_tools: true
+          multimodal: true
+        claude-3-5-haiku-20241022:
+          roles: [chat, code]
+          max_output_tokens: 8192
+          supports_structured_output: true
+          supports_tools: true
+          multimodal: true
     vertexai:
       # Endpoint format: projects/PROJECT_ID/locations/LOCATION
       # Can also be configured via environment variables

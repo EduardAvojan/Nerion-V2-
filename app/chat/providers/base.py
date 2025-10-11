@@ -356,6 +356,119 @@ class _GoogleAdapter(_ProviderAdapter):
         return embeddings
 
 
+class _AnthropicAdapter(_ProviderAdapter):
+    """Adapter for Anthropic Claude API."""
+
+    def generate(
+        self,
+        *,
+        model: str,
+        prompt: Optional[str],
+        temperature: float,
+        max_tokens: Optional[int],
+        timeout: float,
+        messages: Optional[List[Dict[str, str]]] = None,
+        response_format: Optional[str] = None,
+    ) -> LLMResponse:
+        self.ensure_ready(model)
+        url = f"{self.endpoint}/messages"
+
+        # Build messages in Anthropic format
+        anthropic_messages: List[Dict[str, str]] = []
+        system_prompt: Optional[str] = None
+
+        if messages:
+            for item in messages:
+                if not isinstance(item, dict):
+                    continue
+                role = str(item.get("role") or "user").lower()
+                content = item.get("content") or ""
+
+                if role == "system":
+                    system_prompt = content
+                elif role in ("user", "assistant"):
+                    anthropic_messages.append({
+                        "role": role,
+                        "content": content
+                    })
+                else:
+                    # Default unknown roles to user
+                    anthropic_messages.append({
+                        "role": "user",
+                        "content": content
+                    })
+
+        if not anthropic_messages:
+            anthropic_messages.append({
+                "role": "user",
+                "content": prompt or ""
+            })
+
+        # Build request payload
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": int(max_tokens) if max_tokens else 4096,
+            "temperature": max(0.0, min(1.0, float(temperature))),
+        }
+
+        # Add system prompt if provided
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        # Headers for Anthropic API
+        headers = {
+            "x-api-key": self.api_key or "",
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+
+        started = time.perf_counter()
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        except requests.RequestException as exc:  # pragma: no cover - network failures
+            raise ProviderError(f"Anthropic request failed: {exc}") from exc
+        latency = time.perf_counter() - started
+
+        if response.status_code >= 400:
+            raise ProviderError(
+                f"Anthropic error {response.status_code}: {response.text.strip()}"
+            )
+
+        data = response.json()
+
+        # Extract text from response
+        content_blocks = data.get("content") or []
+        text_parts: List[str] = []
+        for block in content_blocks:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+
+        combined_text = "\n".join(text_parts).strip()
+
+        # Extract token usage
+        usage = data.get("usage") or {}
+
+        return LLMResponse(
+            text=combined_text,
+            provider="anthropic",
+            model=model,
+            latency_s=latency,
+            prompt_tokens=usage.get("input_tokens"),
+            completion_tokens=usage.get("output_tokens"),
+        )
+
+    def embed(
+        self,
+        *,
+        model: str,
+        texts: List[str],
+        timeout: float,
+    ) -> List[List[float]]:
+        # Anthropic doesn't provide embeddings API yet
+        raise ProviderError("Anthropic does not support embeddings")
+
+
 class _VertexAIAdapter(_ProviderAdapter):
     """Adapter for Google Cloud Vertex AI generative models."""
 
@@ -536,6 +649,7 @@ class _VertexAIAdapter(_ProviderAdapter):
 _ADAPTERS = {
     "openai": _OpenAIAdapter,
     "google": _GoogleAdapter,
+    "anthropic": _AnthropicAdapter,
     "vertexai": _VertexAIAdapter,
 }
 

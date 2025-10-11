@@ -137,6 +137,7 @@ def _generate_lesson_from_llm(lesson_description: str, lesson_name: str, provide
         "2. **Clear Fix:** `after_code` must fix the problem completely and demonstrate best practices\n"
         "3. **Proves Impact:** `test_code` must FAIL on before_code and PASS on after_code, proving the improvement is real\n"
         "4. **Production Quality:** Code should be realistic, not trivial examples. Use actual libraries and patterns from production systems.\n"
+        "5. **CONCISE:** Keep code focused and concise (each file 50-150 lines max). NO lengthy comments or docstrings - code should be self-explanatory.\n"
         "\n"
         "**Execution Context:** Code runs in a sandbox. `before_code` and `after_code` are saved as `module.py`. Tests in `test_module.py` import via `from module import ...`\n"
         "\n"
@@ -157,6 +158,8 @@ def _generate_lesson_from_llm(lesson_description: str, lesson_name: str, provide
         "- Performance: N+1 queries, caching, connection pooling, algorithmic complexity\n"
         "- Concurrency: Race conditions, deadlocks, thread safety, async patterns\n"
         "- Data Integrity: Validation, sanitization, constraints, transactions\n"
+        "\n"
+        "**OUTPUT FORMAT:** Return ONLY the JSON object. No explanatory text before or after. Just: {\"before_code\": \"...\", \"after_code\": \"...\", \"test_code\": \"...\"}\n"
     )
     user_prompt = f"Create a training exercise for the following lesson: {lesson_description}"
 
@@ -171,10 +174,37 @@ def _generate_lesson_from_llm(lesson_description: str, lesson_name: str, provide
                 provider=provider
             )
             raise LLMGenerationError("LLM returned an empty response", provider=provider, model=model_name)
-        
+
+        # Strip markdown wrapper and extract ONLY the JSON object
+        # Claude often adds explanatory text, wraps JSON in ```json...```, or adds trailing content
+        cleaned_response = response_json_str.strip()
+
+        # Find the first opening brace
+        json_start = cleaned_response.find('{')
+        if json_start == -1:
+            raise json.JSONDecodeError("No JSON object found in response", cleaned_response, 0)
+
+        # Count braces to find the matching closing brace
+        brace_count = 0
+        json_end = -1
+        for i in range(json_start, len(cleaned_response)):
+            if cleaned_response[i] == '{':
+                brace_count += 1
+            elif cleaned_response[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    json_end = i + 1
+                    break
+
+        if json_end == -1:
+            raise json.JSONDecodeError("Unclosed JSON object in response", cleaned_response, json_start)
+
+        # Extract ONLY the JSON object, discarding any surrounding text
+        cleaned_response = cleaned_response[json_start:json_end]
+
         # Validate the response
-        validated_response = validate_llm_response(response_json_str)
-        
+        validated_response = validate_llm_response(cleaned_response)
+
         data = json.loads(validated_response)
         data['name'] = lesson_name
         data['description'] = lesson_description
@@ -240,6 +270,7 @@ def _repair_lesson(lesson_description: str, lesson_name: str, failure_log: str, 
         "2. **Clear Distinction:** `before_code` must have a real, demonstrable problem. `after_code` must clearly fix it.\n"
         "3. **Test Quality:** Tests must prove the problem exists in `before_code` and is fixed in `after_code`.\n"
         "4. **Production Focus:** Ensure the lesson teaches a critical skill (security, reliability, performance, correctness).\n"
+        "5. **CONCISE:** Keep code focused and concise (each file 50-150 lines max). NO lengthy comments - code should be self-explanatory.\n"
         "\n"
         "**Testing Guidelines:**\n"
         "- ALWAYS include ALL imports at the top of test_code (pytest, re, os, hypothesis, etc.)\n"
@@ -262,7 +293,7 @@ def _repair_lesson(lesson_description: str, lesson_name: str, failure_log: str, 
         "- Import errors: Ensure all required modules are imported in test_code\n"
         "- Assertion errors: Make sure assertions match the actual behavior\n"
         "\n"
-        "Return a single JSON object with corrected 'before_code', 'after_code', and 'test_code' keys."
+        "**OUTPUT FORMAT:** Return ONLY the JSON object. No explanatory text. Just: {\"before_code\": \"...\", \"after_code\": \"...\", \"test_code\": \"...\"}\n"
     )
     user_prompt = (
         f"The original lesson description was: {lesson_description}\n\n"
@@ -275,7 +306,36 @@ def _repair_lesson(lesson_description: str, lesson_name: str, failure_log: str, 
         if not response_json_str:
             print("   - Repair LLM returned an empty response.", file=sys.stderr)
             return None
-        data = json.loads(response_json_str)
+
+        # Strip markdown wrapper and extract ONLY the JSON object
+        cleaned_response = response_json_str.strip()
+
+        # Find the first opening brace
+        json_start = cleaned_response.find('{')
+        if json_start == -1:
+            print("   - No JSON object found in repair response.", file=sys.stderr)
+            return None
+
+        # Count braces to find the matching closing brace
+        brace_count = 0
+        json_end = -1
+        for i in range(json_start, len(cleaned_response)):
+            if cleaned_response[i] == '{':
+                brace_count += 1
+            elif cleaned_response[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    json_end = i + 1
+                    break
+
+        if json_end == -1:
+            print("   - Unclosed JSON object in repair response.", file=sys.stderr)
+            return None
+
+        # Extract ONLY the JSON object, discarding any surrounding text
+        cleaned_response = cleaned_response[json_start:json_end]
+
+        data = json.loads(cleaned_response)
         data['name'] = lesson_name
         data['description'] = lesson_description
         return _normalise_redaction_placeholders(data)

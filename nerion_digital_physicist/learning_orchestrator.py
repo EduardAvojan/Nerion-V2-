@@ -277,12 +277,13 @@ if __name__ == "__main__":
     default_project_id = os.getenv("NERION_LLM_PROJECT_ID")
     default_location = os.getenv("NERION_LLM_LOCATION", "us-central1")
     default_model = os.getenv("NERION_LLM_MODEL", "gpt-4")
-    
+
     parser.add_argument("--provider", type=str, default=default_provider, help="LLM provider to use (e.g., 'openai' or 'gemini')")
     parser.add_argument("--project-id", type=str, default=default_project_id, help="Google Cloud Project ID for Vertex AI.")
     parser.add_argument("--location", type=str, default=default_location, help="Google Cloud location for Vertex AI (e.g., 'us-central1').")
     parser.add_argument("--model-name", type=str, default=default_model, help="Vertex AI model name to use (e.g., 'gemini-pro').")
+    parser.add_argument("--category", type=str, default=None, help="Category filter for lesson generation (e.g., 'a1', 'b2', 'c2', 'refactoring')")
     args = parser.parse_args()
 
-    orchestrator = LearningOrchestrator()
+    orchestrator = LearningOrchestrator(category_filter=args.category)
     orchestrator.run_cycle(provider=args.provider, project_id=args.project_id, location=args.location, model_name=args.model_name)

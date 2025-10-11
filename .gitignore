@@ -153,3 +153,4 @@ external_repos/
 # Claude Code configuration (user-specific)
 .claude/
 coverage.json
+*.pid

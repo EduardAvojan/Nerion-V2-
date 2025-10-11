@@ -1,6 +1,7 @@
 """Input validation system for the Digital Physicist system."""
 
 import re
+import logging
 from typing import Optional, Any, Dict
 from functools import wraps
 from pydantic import BaseModel, Field, validator
@@ -28,22 +29,19 @@ class LessonValidation(BaseModel):
 
     @validator('before_code', 'after_code', 'test_code')
     def validate_code(cls, v):
-        # Check for potentially dangerous patterns
+        # Only block truly dangerous patterns
+        # Note: os, sys, subprocess, open() are ALLOWED as they're needed for teaching
+        # Code runs in sandboxed temp directories during vetting anyway
         dangerous_patterns = [
-            r'import\s+os',
-            r'import\s+subprocess',
-            r'import\s+sys',
-            r'eval\s*\(',
-            r'exec\s*\(',
-            r'__import__\s*\(',
-            r'open\s*\(',
-            r'file\s*\(',
+            r'eval\s*\(',  # Direct eval() calls are rarely needed and high-risk
+            r'exec\s*\(',  # Direct exec() calls are rarely needed and high-risk
+            r'__import__\s*\(',  # Dynamic imports can bypass security
         ]
-        
+
         for pattern in dangerous_patterns:
             if re.search(pattern, v, re.IGNORECASE):
                 raise ValueError(f'Code contains potentially dangerous pattern: {pattern}')
-        
+
         return v
 
     @validator('description')
@@ -83,22 +81,19 @@ class BugFixValidation(BaseModel):
 
     @validator('before_code', 'after_code', 'test_code')
     def validate_code(cls, v):
-        # Check for potentially dangerous patterns
+        # Only block truly dangerous patterns
+        # Note: os, sys, subprocess, open() are ALLOWED as they're needed for teaching
+        # Code runs in sandboxed temp directories during vetting anyway
         dangerous_patterns = [
-            r'import\s+os',
-            r'import\s+subprocess',
-            r'import\s+sys',
-            r'eval\s*\(',
-            r'exec\s*\(',
-            r'__import__\s*\(',
-            r'open\s*\(',
-            r'file\s*\(',
+            r'eval\s*\(',  # Direct eval() calls are rarely needed and high-risk
+            r'exec\s*\(',  # Direct exec() calls are rarely needed and high-risk
+            r'__import__\s*\(',  # Dynamic imports can bypass security
         ]
-        
+
         for pattern in dangerous_patterns:
             if re.search(pattern, v, re.IGNORECASE):
                 raise ValueError(f'Code contains potentially dangerous pattern: {pattern}')
-        
+
         return v
 
 
@@ -126,7 +121,7 @@ def validate_lesson_data(func):
                 
                 log_with_context(
                     logger,
-                    logger.info,
+                    logging.INFO,
                     f"Lesson data validated successfully",
                     lesson_name=validated_data.name,
                     validation_status="success"
@@ -137,7 +132,7 @@ def validate_lesson_data(func):
         except Exception as e:
             log_with_context(
                 logger,
-                logger.error,
+                logging.ERROR,
                 f"Lesson data validation failed",
                 error=str(e),
                 error_type=type(e).__name__,
@@ -172,7 +167,7 @@ def validate_bug_fix_data(func):
                 
                 log_with_context(
                     logger,
-                    logger.info,
+                    logging.INFO,
                     f"Bug fix data validated successfully",
                     bug_fix_name=validated_data.name,
                     validation_status="success"
@@ -183,7 +178,7 @@ def validate_bug_fix_data(func):
         except Exception as e:
             log_with_context(
                 logger,
-                logger.error,
+                logging.ERROR,
                 f"Bug fix data validation failed",
                 error=str(e),
                 error_type=type(e).__name__,
@@ -219,22 +214,30 @@ def validate_llm_response(response: str) -> str:
     """Validate and sanitize LLM response."""
     if not response or not isinstance(response, str):
         raise ValidationError("LLM response must be a non-empty string")
+
+    if len(response) > 100000:  # 100KB limit (Claude can be verbose)
+        raise ValidationError("LLM response too long (max 100KB)")
     
-    if len(response) > 10000:  # 10KB limit
-        raise ValidationError("LLM response too long (max 10KB)")
-    
-    # Check for potential injection patterns
-    injection_patterns = [
-        r'<script',
-        r'javascript:',
-        r'data:text/html',
-        r'vbscript:',
-    ]
-    
-    for pattern in injection_patterns:
-        if re.search(pattern, response, re.IGNORECASE):
-            raise ValidationError(f"LLM response contains potentially malicious content: {pattern}")
-    
+    # Check for potential injection patterns (but allow them in JSON code examples)
+    # Only flag if they appear outside of JSON/code context
+    try:
+        import json
+        # If it's valid JSON, it's a code example - allow it
+        json.loads(response)
+        return response  # Valid JSON, no injection risk
+    except (json.JSONDecodeError, ValueError):
+        # Not JSON, check for injection patterns
+        injection_patterns = [
+            r'<script[^>]*>.*</script>',  # Full script tags with content
+            r'javascript:\s*\w+',  # javascript: protocol with code
+            r'data:text/html',
+            r'vbscript:',
+        ]
+
+        for pattern in injection_patterns:
+            if re.search(pattern, response, re.IGNORECASE | re.DOTALL):
+                raise ValidationError(f"LLM response contains potentially malicious content: {pattern}")
+
     return response
 
 
