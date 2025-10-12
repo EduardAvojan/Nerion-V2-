@@ -17,6 +17,15 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
+# Quality hardening components
+try:
+    from .quality_hardening import EnhancedStats, NegativeEvidenceDetector, VerificationHardening
+except ImportError:
+    # Fallback for direct execution
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent))
+    from quality_hardening import EnhancedStats, NegativeEvidenceDetector, VerificationHardening
+
 
 @dataclass
 class ScraperStats:
@@ -162,6 +171,11 @@ class GitHubQualityScraper:
         self.stats = ScraperStats()
         self.session = requests.Session()
 
+        # Hardening components
+        self.enhanced_stats = EnhancedStats()
+        self.penalty_detector = NegativeEvidenceDetector()
+        self.verification_hardener = VerificationHardening()
+
         if github_token:
             self.session.headers.update({
                 "Authorization": f"token {github_token}",
@@ -289,15 +303,15 @@ class GitHubQualityScraper:
             return False
 
     def assess_quality(self, commit: CommitData) -> bool:
-        """Stage 5: Evidence-based semantic quality assessment.
+        """Stage 5: Evidence-based semantic quality assessment with negative evidence.
 
-        Two-tier system:
-        - GOLD (score >= 8, 2+ evidence types, verification): High precision, direct to GNN
-        - SILVER (score >= 2): Medium precision, candidates for semi-supervised learning
+        Two-tier system with penalty enforcement:
+        - GOLD: score ≥8 AND 2+ evidence types AND verification AND zero penalties
+        - SILVER: score ≥2 AND penalties ≤2
         - REJECT: else
 
         Returns True if quality score >= threshold.
-        Updates commit.quality_score and commit.metrics.
+        Updates commit.quality_score, commit.metrics, and commit.tier.
         """
         before_code = commit.before_code
         after_code = commit.after_code
@@ -308,11 +322,20 @@ class GitHubQualityScraper:
         metrics = {}
         score = 0
         evidence = set()  # Track independent evidence types
+        penalties = []  # Track penalties
 
         try:
-            # Parse ASTs
+            # Parse ASTs once
             before_ast = ast.parse(before_code)
             after_ast = ast.parse(after_code)
+
+            # ===== NEGATIVE EVIDENCE (PENALTIES) =====
+            penalties = self.penalty_detector.detect_penalties(
+                commit, before_ast, after_ast, before_code, after_code
+            )
+            penalty_score = self.penalty_detector.calculate_penalty_score(penalties)
+            metrics['penalties'] = penalties
+            metrics['penalty_score'] = penalty_score
 
             # ===== 1. COMPLEXITY (Evidence: "complexity") =====
             before_complexity = self._calculate_complexity(before_ast)
@@ -377,22 +400,15 @@ class GitHubQualityScraper:
             if micro_fix_points > 0:
                 evidence.add("guard_or_boundary_or_raii")
 
-            # ===== 4. VERIFICATION (Evidence: "verification") =====
-            verification_points = 0
-
-            # NEW: Test proximity (commit touches tests, adds asserts)
-            test_signal = self._detect_test_proximity(commit, before_ast, after_ast)
-            metrics["test_proximity"] = test_signal
-            if test_signal:
-                verification_points += 5
-
-            # Error handling (also counts as verification)
-            metrics["adds_error_handling"] = self._count_try_except(after_ast) > self._count_try_except(before_ast)
-            if metrics["adds_error_handling"]:
-                verification_points += 15
+            # ===== 4. VERIFICATION (Evidence: "verification") - HARDENED =====
+            has_verification, verification_points = self.verification_hardener.detect_hardened_verification(
+                commit, before_ast, after_ast
+            )
+            metrics["verification_points"] = verification_points
+            metrics["has_verification"] = has_verification
 
             score += verification_points
-            if verification_points > 0:
+            if has_verification:
                 evidence.add("verification")
 
             # ===== 5. STRUCTURE (Evidence: "structure") =====
@@ -420,27 +436,38 @@ class GitHubQualityScraper:
             if structure_points > 0:
                 evidence.add("structure")
 
+            # ===== APPLY PENALTIES =====
+            net_score = score - penalty_score
+
             # ===== FINALIZE =====
-            commit.quality_score = min(100, score)
+            commit.quality_score = max(0, min(100, net_score))  # Clamp to [0, 100]
             commit.metrics = metrics
             metrics["evidence_types"] = list(evidence)
             metrics["evidence_count"] = len(evidence)
+            metrics["gross_score"] = score
+            metrics["net_score"] = net_score
 
-            # ===== TWO-TIER GATE =====
+            # ===== TWO-TIER GATE WITH PENALTY ENFORCEMENT =====
             GOLD_THRESH = 8
             SILVER_THRESH = 2
+            MAX_PENALTY_FOR_SILVER = 2
 
             # Gold requirements:
-            # - Score >= 8 AND
+            # - Net score >= 8 AND
             # - At least 2 different evidence types AND
-            # - Has verification evidence
+            # - Has verification evidence AND
+            # - Zero penalties (pristine)
             is_gold = (
-                score >= GOLD_THRESH and
+                net_score >= GOLD_THRESH and
                 len(evidence) >= 2 and
-                "verification" in evidence
+                "verification" in evidence and
+                penalty_score == 0  # Zero tolerance for penalties in GOLD
             )
 
-            is_silver = score >= SILVER_THRESH
+            # Silver requirements:
+            # - Net score >= 2 AND
+            # - Penalties <= 2 (some tolerance)
+            is_silver = net_score >= SILVER_THRESH and penalty_score <= MAX_PENALTY_FOR_SILVER
 
             if is_gold:
                 commit.tier = "GOLD"
@@ -827,6 +854,9 @@ def test_{main_func}_executes():
             conn.commit()
             self.stats.accepted += 1
 
+            # Record to enhanced stats for comprehensive metrics
+            self.enhanced_stats.record_commit(commit)
+
         except sqlite3.IntegrityError:
             # Duplicate name, skip
             pass
@@ -835,6 +865,20 @@ def test_{main_func}_executes():
             self.stats.errors += 1
         finally:
             conn.close()
+
+    def print_final_report(self):
+        """Print comprehensive metrics report after scraping."""
+        print("\n")
+        print("=" * 70)
+        print("BASIC SCRAPING STATISTICS")
+        print("=" * 70)
+        self.stats.print_progress()
+
+        print("\n")
+        print("=" * 70)
+        print("COMPREHENSIVE QUALITY VALIDATION")
+        print("=" * 70)
+        self.enhanced_stats.print_comprehensive_report()
 
     def scrape(self, target_count: int = 10000, max_attempts: int = 100000):
         """Main scraping loop.
