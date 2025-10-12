@@ -114,7 +114,13 @@ class GitHubAPIConnector:
                     if response.status_code == 403:
                         print("⏳ Rate limit hit, waiting...")
                         self.wait_for_rate_limit()
-                        continue
+                        # Retry the same request after rate limit reset
+                        response = self.session.get(self.SEARCH_URL, params=params, timeout=30)
+
+                        # If still failing after wait, give up on this page
+                        if response.status_code != 200:
+                            print(f"⚠️  Still failing after rate limit wait: {response.status_code}")
+                            break
 
                     if response.status_code != 200:
                         print(f"⚠️  API error {response.status_code}: {response.text[:200]}")
