@@ -93,7 +93,10 @@ class GitHubAPIConnector:
         page = 1
         total_fetched = 0
 
-        while total_fetched < max_results:
+        # GitHub API limit: max 1000 results per query (10 pages × 100 per page)
+        MAX_PAGES = 10
+
+        while total_fetched < max_results and page <= MAX_PAGES:
             self.wait_for_rate_limit()
 
             params = {
@@ -106,6 +109,7 @@ class GitHubAPIConnector:
 
             retry_count = 0
             max_retries = 3
+            should_stop_pagination = False
 
             while retry_count < max_retries:
                 try:
@@ -117,13 +121,21 @@ class GitHubAPIConnector:
                         # Retry the same request after rate limit reset
                         response = self.session.get(self.SEARCH_URL, params=params, timeout=30)
 
-                        # If still failing after wait, give up on this page
+                        # If still failing after wait, give up on this query entirely
                         if response.status_code != 200:
                             print(f"⚠️  Still failing after rate limit wait: {response.status_code}")
+                            should_stop_pagination = True
                             break
+
+                    # Handle 422: Beyond 1000-result limit
+                    if response.status_code == 422:
+                        print(f"✓ Reached GitHub's 1000-result limit for this query")
+                        should_stop_pagination = True
+                        break
 
                     if response.status_code != 200:
                         print(f"⚠️  API error {response.status_code}: {response.text[:200]}")
+                        should_stop_pagination = True
                         break
 
                     data = response.json()
@@ -131,6 +143,7 @@ class GitHubAPIConnector:
 
                     if not commits:
                         print("✓ No more commits found")
+                        should_stop_pagination = True
                         break
 
                     for commit in commits:
@@ -176,7 +189,12 @@ class GitHubAPIConnector:
 
                     if retry_count >= max_retries:
                         print(f"❌ Max retries reached, skipping this page")
+                        should_stop_pagination = True
                         break
+
+            # Check if we need to stop pagination (error occurred)
+            if should_stop_pagination:
+                break
 
     def fetch_commit_diff(self, repo: str, sha: str) -> Optional[dict]:
         """Fetch detailed commit information including file changes.
