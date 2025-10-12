@@ -77,6 +77,7 @@ class CommitData:
     quality_score: int = 0
     metrics: Dict = field(default_factory=dict)
     category: Optional[str] = None
+    tier: str = "REJECT"  # GOLD, SILVER, or REJECT
 
 
 @dataclass
@@ -288,7 +289,12 @@ class GitHubQualityScraper:
             return False
 
     def assess_quality(self, commit: CommitData) -> bool:
-        """Stage 5: Semantic quality assessment.
+        """Stage 5: Evidence-based semantic quality assessment.
+
+        Two-tier system:
+        - GOLD (score >= 8, 2+ evidence types, verification): High precision, direct to GNN
+        - SILVER (score >= 2): Medium precision, candidates for semi-supervised learning
+        - REJECT: else
 
         Returns True if quality score >= threshold.
         Updates commit.quality_score and commit.metrics.
@@ -301,60 +307,151 @@ class GitHubQualityScraper:
 
         metrics = {}
         score = 0
+        evidence = set()  # Track independent evidence types
 
         try:
             # Parse ASTs
             before_ast = ast.parse(before_code)
             after_ast = ast.parse(after_code)
 
-            # Complexity metrics
+            # ===== 1. COMPLEXITY (Evidence: "complexity") =====
             before_complexity = self._calculate_complexity(before_ast)
             after_complexity = self._calculate_complexity(after_ast)
             metrics["complexity_delta"] = after_complexity - before_complexity
 
-            # Complexity reduction is good
+            complexity_points = 0
             if metrics["complexity_delta"] < -2:
-                score += 20
+                complexity_points = 20
             elif metrics["complexity_delta"] < 0:
-                score += 10
+                complexity_points = 10
 
-            # Security improvements
+            score += complexity_points
+            if complexity_points > 0:
+                evidence.add("complexity")
+
+            # ===== 2. SECURITY (Evidence: "security") =====
+            security_points = 0
+
+            # Removes eval/exec
             metrics["removes_eval"] = "eval(" in before_code and "eval(" not in after_code
             metrics["removes_exec"] = "exec(" in before_code and "exec(" not in after_code
-            metrics["adds_validation"] = self._count_validations(after_ast) > self._count_validations(before_ast)
 
             if metrics["removes_eval"]:
-                score += 15
+                security_points += 15
             if metrics["removes_exec"]:
-                score += 15
+                security_points += 15
+
+            # Adds validation
+            metrics["adds_validation"] = self._count_validations(after_ast) > self._count_validations(before_ast)
             if metrics["adds_validation"]:
-                score += 10
+                security_points += 10
 
-            # Quality improvements
+            # NEW: Sanitization patterns
+            metrics["adds_sanitization"] = self._detect_sanitization(before_code, after_code)
+            if metrics["adds_sanitization"]:
+                security_points += 5
+
+            score += security_points
+            if security_points > 0:
+                evidence.add("security")
+
+            # ===== 3. GUARDS / BOUNDARY / RAII / DEFAULTS (Evidence: "guard_or_boundary_or_raii") =====
+            micro_fix_points = 0
+
+            # NEW: Guard checks (null/None checks, length checks, type checks)
+            guard_score = self._detect_guard_additions(before_ast, after_ast, before_code, after_code)
+            metrics["adds_guards"] = guard_score > 0
+            micro_fix_points += guard_score
+
+            # NEW: RAII patterns (with statements, context managers)
+            raii_score = self._detect_raii_patterns(before_ast, after_ast)
+            metrics["adds_raii"] = raii_score > 0
+            micro_fix_points += raii_score
+
+            # NEW: Deterministic defaults (return None/[]/{}/ 0 instead of undefined)
+            default_score = self._detect_deterministic_defaults(before_ast, after_ast)
+            metrics["adds_defaults"] = default_score > 0
+            micro_fix_points += default_score
+
+            score += micro_fix_points
+            if micro_fix_points > 0:
+                evidence.add("guard_or_boundary_or_raii")
+
+            # ===== 4. VERIFICATION (Evidence: "verification") =====
+            verification_points = 0
+
+            # NEW: Test proximity (commit touches tests, adds asserts)
+            test_signal = self._detect_test_proximity(commit, before_ast, after_ast)
+            metrics["test_proximity"] = test_signal
+            if test_signal:
+                verification_points += 5
+
+            # Error handling (also counts as verification)
             metrics["adds_error_handling"] = self._count_try_except(after_ast) > self._count_try_except(before_ast)
-            metrics["adds_type_hints"] = self._count_type_hints(after_ast) > self._count_type_hints(before_ast)
-            metrics["adds_docstrings"] = self._count_docstrings(after_ast) > self._count_docstrings(before_ast)
-
             if metrics["adds_error_handling"]:
-                score += 15
-            if metrics["adds_type_hints"]:
-                score += 10
-            if metrics["adds_docstrings"]:
-                score += 5
+                verification_points += 15
 
-            # Structure improvements
+            score += verification_points
+            if verification_points > 0:
+                evidence.add("verification")
+
+            # ===== 5. STRUCTURE (Evidence: "structure") =====
+            structure_points = 0
+
+            # Type hints
+            metrics["adds_type_hints"] = self._count_type_hints(after_ast) > self._count_type_hints(before_ast)
+            if metrics["adds_type_hints"]:
+                structure_points += 10
+
+            # Docstrings
+            metrics["adds_docstrings"] = self._count_docstrings(after_ast) > self._count_docstrings(before_ast)
+            if metrics["adds_docstrings"]:
+                structure_points += 5
+
+            # Function extraction
             before_functions = self._count_functions(before_ast)
             after_functions = self._count_functions(after_ast)
             metrics["function_count_delta"] = after_functions - before_functions
 
-            # Modularization is good (more functions from refactoring)
             if metrics["function_count_delta"] > 0 and "refactor" in commit.message.lower():
-                score += 10
+                structure_points += 10
 
+            score += structure_points
+            if structure_points > 0:
+                evidence.add("structure")
+
+            # ===== FINALIZE =====
             commit.quality_score = min(100, score)
             commit.metrics = metrics
+            metrics["evidence_types"] = list(evidence)
+            metrics["evidence_count"] = len(evidence)
 
-            return commit.quality_score >= self.thresholds.min_quality_score
+            # ===== TWO-TIER GATE =====
+            GOLD_THRESH = 8
+            SILVER_THRESH = 2
+
+            # Gold requirements:
+            # - Score >= 8 AND
+            # - At least 2 different evidence types AND
+            # - Has verification evidence
+            is_gold = (
+                score >= GOLD_THRESH and
+                len(evidence) >= 2 and
+                "verification" in evidence
+            )
+
+            is_silver = score >= SILVER_THRESH
+
+            if is_gold:
+                commit.tier = "GOLD"
+                return True  # Always accept Gold
+            elif is_silver:
+                commit.tier = "SILVER"
+                # Accept Silver only if threshold allows (for two-tier collection)
+                return self.thresholds.min_quality_score <= SILVER_THRESH
+            else:
+                commit.tier = "REJECT"
+                return False
 
         except Exception as e:
             print(f"  - Quality assessment error: {e}")
@@ -407,6 +504,143 @@ class GitHubQualityScraper:
                     if node.func.id in ('isinstance', 'issubclass', 'hasattr'):
                         count += 1
         return count
+
+    def _detect_guard_additions(self, before_ast, after_ast, before_code, after_code):
+        """Detect addition of guard clauses (null checks, length checks, type checks)."""
+        score = 0
+
+        # Pattern 1: None/null checks added
+        before_none_checks = self._count_none_checks(before_ast)
+        after_none_checks = self._count_none_checks(after_ast)
+        if after_none_checks > before_none_checks:
+            score += 2
+
+        # Pattern 2: Length/boundary checks added
+        before_len_checks = self._count_length_checks(before_ast)
+        after_len_checks = self._count_length_checks(after_ast)
+        if after_len_checks > before_len_checks:
+            score += 2
+
+        # Pattern 3: Early returns added (common guard pattern)
+        before_returns = self._count_early_returns(before_ast)
+        after_returns = self._count_early_returns(after_ast)
+        if after_returns > before_returns:
+            score += 1
+
+        return score
+
+    def _count_none_checks(self, tree):
+        """Count None/null checks (if x is None, if x is not None, if not x)."""
+        count = 0
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare):
+                # if x is None, if x is not None
+                if any(isinstance(op, (ast.Is, ast.IsNot)) for op in node.ops):
+                    if any(isinstance(comp, ast.Constant) and comp.value is None
+                           for comp in node.comparators):
+                        count += 1
+            elif isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+                # if not x (common guard)
+                count += 1
+        return count
+
+    def _count_length_checks(self, tree):
+        """Count length/boundary checks (len(x) > 0, i < len(arr), etc.)."""
+        count = 0
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare):
+                # Check if len() is involved
+                if isinstance(node.left, ast.Call):
+                    if isinstance(node.left.func, ast.Name) and node.left.func.id == 'len':
+                        count += 1
+                # Check comparators
+                for comp in node.comparators:
+                    if isinstance(comp, ast.Call):
+                        if isinstance(comp.func, ast.Name) and comp.func.id == 'len':
+                            count += 1
+        return count
+
+    def _count_early_returns(self, tree):
+        """Count early return statements (guard pattern)."""
+        count = 0
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                # Count returns that aren't the last statement
+                returns = [n for n in ast.walk(node) if isinstance(n, ast.Return)]
+                if len(returns) > 1:  # More than one return suggests guards
+                    count += len(returns) - 1
+        return count
+
+    def _detect_raii_patterns(self, before_ast, after_ast):
+        """Detect RAII patterns (with statements, context managers)."""
+        before_with = sum(1 for n in ast.walk(before_ast) if isinstance(n, ast.With))
+        after_with = sum(1 for n in ast.walk(after_ast) if isinstance(n, ast.With))
+
+        if after_with > before_with:
+            return 3  # RAII pattern added
+        return 0
+
+    def _detect_deterministic_defaults(self, before_ast, after_ast):
+        """Detect addition of deterministic defaults (return None/[]/{}/ instead of undefined)."""
+        score = 0
+
+        # Count explicit default returns
+        before_returns = [n for n in ast.walk(before_ast) if isinstance(n, ast.Return)]
+        after_returns = [n for n in ast.walk(after_ast) if isinstance(n, ast.Return)]
+
+        # Check for returns with explicit None/empty collections
+        def has_default(ret_node):
+            if ret_node.value is None:
+                return False
+            if isinstance(ret_node.value, ast.Constant):
+                return ret_node.value.value in (None, [], {}, 0, False, "")
+            if isinstance(ret_node.value, (ast.List, ast.Dict, ast.Set, ast.Tuple)):
+                return len(ret_node.value.elts if hasattr(ret_node.value, 'elts') else []) == 0
+            return False
+
+        before_defaults = sum(1 for r in before_returns if has_default(r))
+        after_defaults = sum(1 for r in after_returns if has_default(r))
+
+        if after_defaults > before_defaults:
+            score += 2
+
+        return score
+
+    def _detect_sanitization(self, before_code, after_code):
+        """Detect sanitization patterns (escaping, parameterized queries, etc.)."""
+        # Parameterized SQL
+        if ("execute(" in after_code and "?" in after_code) and ("execute(" in before_code and "?" not in before_code):
+            return True
+
+        # HTML escaping
+        if "html.escape" in after_code and "html.escape" not in before_code:
+            return True
+
+        # URL encoding
+        if "urllib.parse.quote" in after_code and "urllib.parse.quote" not in before_code:
+            return True
+
+        return False
+
+    def _detect_test_proximity(self, commit, before_ast, after_ast):
+        """Detect test proximity signals (touches tests, adds asserts)."""
+        # Check if any files are test files
+        test_files = [f for f in commit.files if 'test' in f.lower()]
+        if test_files:
+            return True
+
+        # Check if asserts were added
+        before_asserts = sum(1 for n in ast.walk(before_ast) if isinstance(n, ast.Assert))
+        after_asserts = sum(1 for n in ast.walk(after_ast) if isinstance(n, ast.Assert))
+        if after_asserts > before_asserts:
+            return True
+
+        # Check commit message for test/CI keywords
+        msg = commit.message.lower()
+        if any(kw in msg for kw in ['test', 'ci', 'failing', 'green', 'pass']):
+            return True
+
+        return False
 
     def infer_category(self, commit: CommitData) -> str:
         """Infer CEFR category from commit characteristics."""
@@ -581,6 +815,7 @@ def test_{main_func}_executes():
             "timestamp": commit.timestamp,
             "quality_score": commit.quality_score,
             "metrics": commit.metrics,
+            "tier": commit.tier,
         })
 
         try:
