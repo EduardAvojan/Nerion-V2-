@@ -43,7 +43,8 @@ def integrate_scraper_with_api(
     scraper: GitHubQualityScraper,
     connector: GitHubAPIConnector,
     target_count: int,
-    test_mode: bool = False
+    test_mode: bool = False,
+    start_query: int = 1
 ):
     """Integrate the scraper with GitHub API connector.
 
@@ -52,6 +53,7 @@ def integrate_scraper_with_api(
         connector: GitHub API connector
         target_count: Target number of quality commits to collect
         test_mode: If True, only process first query with limited results
+        start_query: Query number to start from (1-indexed)
     """
     queries = build_search_queries()
 
@@ -62,10 +64,15 @@ def integrate_scraper_with_api(
     else:
         max_per_query = 1000  # GitHub API limit per query
 
+    # Skip queries before start_query
+    if start_query > 1:
+        print(f"⏭️  Skipping first {start_query - 1} queries, starting from query {start_query}")
+        queries = queries[start_query - 1:]  # Convert to 0-indexed
+
     total_processed = 0
     total_accepted = 0
 
-    for query_idx, query in enumerate(queries, 1):
+    for query_idx, query in enumerate(queries, start_query):
         if scraper.stats.accepted >= target_count:
             print(f"\n✅ Target reached! Collected {scraper.stats.accepted} quality commits")
             break
@@ -215,6 +222,12 @@ def main():
         default=None,
         help="GitHub personal access token (optional, increases rate limit)"
     )
+    parser.add_argument(
+        "--start-query",
+        type=int,
+        default=1,
+        help="Start from specific query number (1-indexed, default: 1)"
+    )
 
     args = parser.parse_args()
 
@@ -244,6 +257,8 @@ def main():
     print(f"   Database: {args.db}")
     print(f"   Quality threshold: {args.min_quality}/100")
     print(f"   Test mode: {args.test}")
+    if args.start_query > 1:
+        print(f"   Starting from query: {args.start_query}")
     print()
 
     scraper = GitHubQualityScraper(
@@ -271,7 +286,8 @@ def main():
             scraper=scraper,
             connector=connector,
             target_count=args.target,
-            test_mode=args.test
+            test_mode=args.test,
+            start_query=args.start_query
         )
     except KeyboardInterrupt:
         print("\n\n⚠️  Interrupted by user")
