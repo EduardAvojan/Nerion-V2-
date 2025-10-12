@@ -36,6 +36,7 @@ class ScraperStats:
     filtered_file_type: int = 0
     filtered_size: int = 0
     filtered_syntax: int = 0
+    filtered_quarantine: int = 0  # NEW: Quarantined (vendor/generated/whitespace)
     filtered_quality: int = 0
     accepted: int = 0
     errors: int = 0
@@ -57,6 +58,7 @@ class ScraperStats:
 ║ ├─ File type filter:  {self.filtered_file_type:>6} ❌  ║
 ║ ├─ Size filter:       {self.filtered_size:>6} ❌  ║
 ║ ├─ Syntax filter:     {self.filtered_syntax:>6} ❌  ║
+║ ├─ Quarantine:        {self.filtered_quarantine:>6} ❌  ║
 ║ ├─ Quality filter:    {self.filtered_quality:>6} ❌  ║
 ║ └─ ACCEPTED:          {self.accepted:>6} ✅  ║
 ║                                      ║
@@ -301,6 +303,75 @@ class GitHubQualityScraper:
             return False
         except Exception:
             return False
+
+    def passes_quarantine_filter(self, commit: CommitData, before_code: str, after_code: str) -> bool:
+        """Stage 4.5: Quarantine vendor/generated/whitespace-heavy diffs.
+
+        Rejects:
+        - Vendor/generated/lockfiles
+        - Mass whitespace diffs (>80% whitespace changes)
+        - Pure renames (no body changes, detected heuristically)
+        """
+        # 1. Check for vendor/generated/lockfile paths
+        QUARANTINE_PATH_PATTERNS = [
+            r'vendor/',
+            r'third_party/',
+            r'node_modules/',
+            r'dist/',
+            r'build/',
+            r'\.min\.js$',
+            r'\.min\.css$',
+            r'package-lock\.json$',
+            r'poetry\.lock$',
+            r'Pipfile\.lock$',
+            r'yarn\.lock$',
+            r'Gemfile\.lock$',
+            r'composer\.lock$',
+            r'-lock\.json$',
+            r'\.generated\.',
+            r'_pb2\.py$',  # Protobuf generated
+            r'\.pb\.go$',  # Protobuf generated
+        ]
+
+        for file_path in commit.files:
+            for pattern in QUARANTINE_PATH_PATTERNS:
+                if re.search(pattern, file_path, re.IGNORECASE):
+                    return False  # Quarantine
+
+        # 2. Check for mass whitespace diff
+        before_lines = before_code.split('\n')
+        after_lines = after_code.split('\n')
+
+        # Count non-whitespace changes
+        before_stripped = [l.strip() for l in before_lines if l.strip()]
+        after_stripped = [l.strip() for l in after_lines if l.strip()]
+
+        # If very few stripped lines changed but many raw lines changed, it's mostly whitespace
+        total_lines = len(before_lines) + len(after_lines)
+        if total_lines > 10:  # Only check for non-trivial diffs
+            stripped_diff = abs(len(before_stripped) - len(after_stripped))
+            raw_diff = abs(len(before_lines) - len(after_lines))
+
+            if raw_diff > 0:
+                whitespace_ratio = (raw_diff - stripped_diff) / raw_diff
+                if whitespace_ratio > 0.8:  # >80% whitespace
+                    return False  # Quarantine
+
+        # 3. Check for pure rename (same stripped content, different line count suggests formatting only)
+        # Simple heuristic: if all stripped lines from before are in after and vice versa
+        if len(before_stripped) > 5 and len(after_stripped) > 5:
+            before_set = set(before_stripped)
+            after_set = set(after_stripped)
+
+            # If >95% overlap, likely just formatting/rename
+            overlap = len(before_set & after_set)
+            total_unique = len(before_set | after_set)
+            if total_unique > 0:
+                overlap_ratio = overlap / total_unique
+                if overlap_ratio > 0.95:
+                    return False  # Quarantine (likely pure formatting)
+
+        return True  # Pass quarantine
 
     def assess_quality(self, commit: CommitData) -> bool:
         """Stage 5: Evidence-based semantic quality assessment with negative evidence.
