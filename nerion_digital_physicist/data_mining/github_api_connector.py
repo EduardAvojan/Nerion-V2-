@@ -54,7 +54,25 @@ class GitHubAPIConnector:
             reset_time = rate.get("reset", time.time() + 3600)
             wait_seconds = max(0, reset_time - time.time()) + 10
             print(f"⏳ Rate limit exceeded. Waiting {wait_seconds/60:.1f} minutes...")
+
+            # Close the session before long wait to prevent stale connections
+            token = self.session.headers.get("Authorization", "").replace("token ", "")
+            self.session.close()
+
             time.sleep(wait_seconds)
+
+            # Recreate session after wait with fresh connection
+            self.session = requests.Session()
+            if token:
+                self.session.headers.update({
+                    "Authorization": f"token {token}",
+                    "Accept": "application/vnd.github.cloak-preview+json",
+                })
+            else:
+                self.session.headers.update({
+                    "Accept": "application/vnd.github.cloak-preview+json",
+                })
+            print(f"✅ Rate limit reset. Resuming with fresh connection...")
 
     def search_commits(
         self,
@@ -86,38 +104,73 @@ class GitHubAPIConnector:
                 "order": "desc",
             }
 
-            try:
-                response = self.session.get(self.SEARCH_URL, params=params, timeout=30)
+            retry_count = 0
+            max_retries = 3
 
-                if response.status_code == 403:
-                    print("⏳ Rate limit hit, waiting...")
-                    self.wait_for_rate_limit()
-                    continue
+            while retry_count < max_retries:
+                try:
+                    response = self.session.get(self.SEARCH_URL, params=params, timeout=30)
 
-                if response.status_code != 200:
-                    print(f"⚠️  API error {response.status_code}: {response.text[:200]}")
-                    break
+                    if response.status_code == 403:
+                        print("⏳ Rate limit hit, waiting...")
+                        self.wait_for_rate_limit()
+                        continue
 
-                data = response.json()
-                commits = data.get("items", [])
-
-                if not commits:
-                    print("✓ No more commits found")
-                    break
-
-                for commit in commits:
-                    yield commit
-                    total_fetched += 1
-                    if total_fetched >= max_results:
+                    if response.status_code != 200:
+                        print(f"⚠️  API error {response.status_code}: {response.text[:200]}")
                         break
 
-                page += 1
-                time.sleep(1)  # Be nice to GitHub API
+                    data = response.json()
+                    commits = data.get("items", [])
 
-            except requests.exceptions.RequestException as e:
-                print(f"⚠️  Request error: {e}")
-                time.sleep(5)
-                continue
+                    if not commits:
+                        print("✓ No more commits found")
+                        break
+
+                    for commit in commits:
+                        yield commit
+                        total_fetched += 1
+                        if total_fetched >= max_results:
+                            break
+
+                    page += 1
+                    time.sleep(1)  # Be nice to GitHub API
+                    break  # Success, exit retry loop
+
+                except requests.exceptions.Timeout as e:
+                    retry_count += 1
+                    wait_time = 2 ** retry_count  # Exponential backoff: 2, 4, 8 seconds
+                    print(f"⏰ Request timeout (attempt {retry_count}/{max_retries}). Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+
+                    if retry_count >= max_retries:
+                        print(f"❌ Max retries reached, skipping this page")
+                        break
+
+                except requests.exceptions.RequestException as e:
+                    retry_count += 1
+                    wait_time = 2 ** retry_count
+                    print(f"⚠️  Request error (attempt {retry_count}/{max_retries}): {e}")
+
+                    # Close and recreate session on network error
+                    token = self.session.headers.get("Authorization", "").replace("token ", "")
+                    self.session.close()
+                    self.session = requests.Session()
+                    if token:
+                        self.session.headers.update({
+                            "Authorization": f"token {token}",
+                            "Accept": "application/vnd.github.cloak-preview+json",
+                        })
+                    else:
+                        self.session.headers.update({
+                            "Accept": "application/vnd.github.cloak-preview+json",
+                        })
+
+                    time.sleep(wait_time)
+
+                    if retry_count >= max_retries:
+                        print(f"❌ Max retries reached, skipping this page")
+                        break
 
     def fetch_commit_diff(self, repo: str, sha: str) -> Optional[dict]:
         """Fetch detailed commit information including file changes.
@@ -133,20 +186,40 @@ class GitHubAPIConnector:
 
         url = f"{self.BASE_URL}/repos/{repo}/commits/{sha}"
 
-        try:
-            response = self.session.get(url, timeout=30)
+        retry_count = 0
+        max_retries = 3
 
-            if response.status_code == 403:
-                self.wait_for_rate_limit()
+        while retry_count < max_retries:
+            try:
                 response = self.session.get(url, timeout=30)
 
-            if response.status_code != 200:
-                return None
+                if response.status_code == 403:
+                    self.wait_for_rate_limit()
+                    response = self.session.get(url, timeout=30)
 
-            return response.json()
+                if response.status_code != 200:
+                    return None
 
-        except requests.exceptions.RequestException:
-            return None
+                return response.json()
+
+            except requests.exceptions.Timeout:
+                retry_count += 1
+                wait_time = 2 ** retry_count
+                if retry_count < max_retries:
+                    print(f"  ⏰ Commit fetch timeout (retry {retry_count}/{max_retries})...")
+                    time.sleep(wait_time)
+                else:
+                    return None
+
+            except requests.exceptions.RequestException as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    print(f"  ⚠️  Commit fetch error (retry {retry_count}/{max_retries}): {e}")
+                    time.sleep(2 ** retry_count)
+                else:
+                    return None
+
+        return None
 
     def extract_commit_data(self, commit_json: dict) -> Optional[CommitData]:
         """Extract structured commit data from API response.
@@ -283,32 +356,48 @@ class GitHubAPIConnector:
         url = f"{self.BASE_URL}/repos/{repo}/contents/{path}"
         params = {"ref": ref}
 
-        try:
-            response = self.session.get(url, params=params, timeout=30)
+        retry_count = 0
+        max_retries = 3
 
-            if response.status_code != 200:
-                return None
+        while retry_count < max_retries:
+            try:
+                response = self.session.get(url, params=params, timeout=30)
 
-            data = response.json()
+                if response.status_code != 200:
+                    return None
 
-            # Check file size before downloading (GitHub API includes size)
-            file_size = data.get("size", 0)
-            if file_size > 1_000_000:  # Skip files larger than 1MB
-                print(f"  - Skipping large file: {path} ({file_size/1024:.1f}KB)")
-                return None
+                data = response.json()
 
-            # Content is base64 encoded
-            content_b64 = data.get("content", "")
-            if not content_b64:
-                return None
+                # Check file size before downloading (GitHub API includes size)
+                file_size = data.get("size", 0)
+                if file_size > 1_000_000:  # Skip files larger than 1MB
+                    print(f"  - Skipping large file: {path} ({file_size/1024:.1f}KB)")
+                    return None
 
-            # Decode
-            content = base64.b64decode(content_b64).decode("utf-8", errors="ignore")
-            return content
+                # Content is base64 encoded
+                content_b64 = data.get("content", "")
+                if not content_b64:
+                    return None
 
-        except Exception as e:
-            print(f"  - Failed to fetch file content: {e}")
-            return None
+                # Decode
+                content = base64.b64decode(content_b64).decode("utf-8", errors="ignore")
+                return content
+
+            except requests.exceptions.Timeout:
+                retry_count += 1
+                if retry_count < max_retries:
+                    time.sleep(2 ** retry_count)
+                else:
+                    return None
+
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    print(f"  - Failed to fetch file content: {e}")
+                    return None
+                time.sleep(2 ** retry_count)
+
+        return None
 
 
 def build_search_queries() -> List[str]:
