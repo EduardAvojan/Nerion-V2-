@@ -2,7 +2,7 @@
 
 ## ✅ What Was Built
 
-I've created a **production-grade GitHub scraper** that mines high-quality Python **code improvements** from public repositories - including bug fixes, security patches, refactorings, optimizations, error handling, and best practices. This will give your GNN the massive, diverse training data it needs to become a true "biological immune system" for software.
+I've created a **production-grade GitHub scraper** that mines high-quality **code improvements** from public repositories across **6 languages** (Python, JavaScript, TypeScript, Rust, Go, Java) - including bug fixes, security patches, refactorings, optimizations, error handling, and best practices. This will give your GNN the massive, diverse training data it needs to become a true "biological immune system" for software.
 
 ## 📦 Files Created
 
@@ -27,9 +27,9 @@ GITHUB_SCRAPER_GUIDE.md             # This file
 - Accepts: fixes, bugs, security, refactorings
 
 **Stage 2: File Type Filter**
-- Python source only (`.py`)
-- Max 5 files changed
-- No tests, configs, or docs
+- Multi-language support: Python (`.py`), JavaScript (`.js`, `.jsx`), TypeScript (`.ts`, `.tsx`), Rust (`.rs`), Go (`.go`), Java (`.java`)
+- Max 10 files changed
+- Rejects build artifacts, minified files, and lock files
 
 **Stage 3: Size Filter**
 - 3-300 lines changed
@@ -37,8 +37,9 @@ GITHUB_SCRAPER_GUIDE.md             # This file
 - Balanced changes (not just adds/deletes)
 
 **Stage 4: Syntax Validation**
-- Both before/after must parse as valid Python
-- Must have meaningful AST structure
+- Language-aware validation:
+  - Python: AST parsing with structure checks
+  - JS/TS/Rust/Go/Java: Balanced braces and meaningful content
 
 **Stage 5: Quality Scoring (0-100)**
 - **Complexity:** Reduces cyclomatic complexity (+20)

@@ -114,15 +114,22 @@ def integrate_scraper_with_api(
 
                 full_commit = connector.fetch_commit_diff(repo, sha)
                 if not full_commit:
+                    scraper.stats.failed_fetch_diff += 1
                     continue
 
                 # Update files list from full commit (search results don't include files)
                 commit_data.files = [f["filename"] for f in full_commit.get("files", [])]
 
-                # Extract code changes for Python files
+                # Track commit outcome (only increment ONE counter per commit)
+                commit_accepted = False
+                commit_rejection_reason = None
+
+                # Extract code changes for source files (all supported languages)
                 for file_path in commit_data.files:
-                    if not file_path.endswith('.py'):
-                        continue
+                    # Detect language from file extension
+                    language = scraper.detect_language(file_path)
+                    if not language:
+                        continue  # Skip non-source files
 
                     changes = connector.extract_file_changes(full_commit, file_path, repo)
                     if not changes:
@@ -131,33 +138,44 @@ def integrate_scraper_with_api(
                     before_code, after_code = changes
                     commit_data.before_code = before_code
                     commit_data.after_code = after_code
+                    commit_data.language = language
 
                     # Stage 3: Size filter
                     if not scraper.passes_size_filter(before_code, after_code):
-                        scraper.stats.filtered_size += 1
+                        if not commit_rejection_reason:
+                            commit_rejection_reason = 'size'
                         continue
 
-                    # Stage 4: Syntax validation
-                    if not scraper.validate_syntax(before_code, after_code):
-                        scraper.stats.filtered_syntax += 1
+                    # Stage 4: Syntax validation (language-aware)
+                    if not scraper.validate_syntax(before_code, after_code, language):
+                        if not commit_rejection_reason:
+                            commit_rejection_reason = 'syntax'
                         continue
 
-                    # Stage 5: Quality assessment
+                    # Stage 5: Quarantine filter
+                    if not scraper.passes_quarantine_filter(commit_data, before_code, after_code):
+                        if not commit_rejection_reason:
+                            commit_rejection_reason = 'quarantine'
+                        continue
+
+                    # Stage 6: Quality assessment
                     if not scraper.assess_quality(commit_data):
-                        scraper.stats.filtered_quality += 1
+                        if not commit_rejection_reason:
+                            commit_rejection_reason = 'quality'
                         continue
 
-                    # Stage 6: Infer category
+                    # Stage 7: Infer category
                     commit_data.category = scraper.infer_category(commit_data)
 
-                    # Stage 7: Synthesize test code
+                    # Stage 8: Synthesize test code
                     test_code = scraper.synthesize_test_code(commit_data)
 
-                    # Stage 8: Save to database
+                    # Stage 9: Save to database
                     scraper.save_lesson(commit_data, test_code)
                     total_accepted += 1
+                    commit_accepted = True
 
-                    print(f"  ✅ Accepted: {commit_data.sha[:8]} ({commit_data.category}) - Score: {commit_data.quality_score}")
+                    print(f"  ✅ Accepted: {commit_data.sha[:8]} [{commit_data.language}] ({commit_data.category}) - Score: {commit_data.quality_score}")
 
                     # Show progress every 10 accepted
                     if total_accepted % 10 == 0:
@@ -165,6 +183,21 @@ def integrate_scraper_with_api(
 
                     # Only process one file per commit to avoid duplicates
                     break
+
+                # Increment counters ONCE per commit based on outcome
+                if commit_accepted:
+                    pass  # Already counted in save_lesson
+                elif commit_rejection_reason == 'size':
+                    scraper.stats.filtered_size += 1
+                elif commit_rejection_reason == 'syntax':
+                    scraper.stats.filtered_syntax += 1
+                elif commit_rejection_reason == 'quarantine':
+                    scraper.stats.filtered_quarantine += 1
+                elif commit_rejection_reason == 'quality':
+                    scraper.stats.filtered_quality += 1
+                elif commit_rejection_reason is None:
+                    # No valid code files processed successfully
+                    scraper.stats.no_code_files += 1
 
                 # Check if target reached
                 if scraper.stats.accepted >= target_count:
@@ -191,7 +224,7 @@ def integrate_scraper_with_api(
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="GitHub Quality Scraper - Mine high-quality Python bug fixes for GNN training"
+        description="GitHub Quality Scraper - Mine high-quality code improvements (Python, JS, TS, Rust, Go, Java) for GNN training"
     )
     parser.add_argument(
         "--target",

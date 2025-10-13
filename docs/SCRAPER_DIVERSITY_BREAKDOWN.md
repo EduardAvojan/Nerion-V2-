@@ -2,7 +2,31 @@
 
 ## ✅ What the Scraper Actually Gets
 
-The scraper searches for **ALL types of code improvements**, not just bug fixes.
+The scraper searches for **ALL types of code improvements across 6 languages** (Python, JavaScript, TypeScript, Rust, Go, Java), not just bug fixes.
+
+---
+
+## 🌐 Multi-Language Support
+
+Nerion's immune system understands **6 programming languages**:
+
+| Language | Extensions | Syntax Validation |
+|----------|-----------|-------------------|
+| **Python** | `.py` | AST parsing with structure analysis |
+| **JavaScript** | `.js`, `.jsx` | Balanced braces + meaningful content |
+| **TypeScript** | `.ts`, `.tsx` | Balanced braces + meaningful content |
+| **Rust** | `.rs` | Balanced braces + meaningful content |
+| **Go** | `.go` | Balanced braces + meaningful content |
+| **Java** | `.java` | Balanced braces + meaningful content |
+
+**Why multi-language?**
+> "A biological immune system cannot be an effective immune system if it understands only one language."
+
+By training on multiple languages, Nerion's GNN learns:
+- **Universal code patterns** that transcend language boundaries
+- **Security vulnerabilities** common across ecosystems (SQL injection works in Python AND Node.js)
+- **Structural improvements** applicable to any codebase
+- **Cross-pollination** of best practices between language communities
 
 ---
 
