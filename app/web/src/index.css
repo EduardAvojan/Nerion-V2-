@@ -1,0 +1,77 @@
+/* Nerion Mission Control - Global Styles */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Nerion Theme Colors */
+  --bg-primary: #0a0e14;
+  --bg-secondary: #1a1f2e;
+  --bg-tertiary: #0f1419;
+
+  --accent: #00d9ff;
+  --accent-soft: rgba(0, 217, 255, 0.3);
+  --accent-bright: #66eeff;
+
+  --success: #00ff88;
+  --warning: #ffcc00;
+  --error: #ff3333;
+
+  --text-primary: #e0e0e0;
+  --text-secondary: #888888;
+  --text-dim: #666666;
+
+  --border: rgba(0, 217, 255, 0.2);
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 20px var(--accent-soft);
+}
+
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+code, pre {
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-bright);
+}
+
+/* Utility classes */
+.status-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.status-online { background: var(--success); }
+.status-warning { background: var(--warning); }
+.status-error { background: var(--error); }
