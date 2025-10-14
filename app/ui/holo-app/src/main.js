@@ -56,6 +56,8 @@ function resolvePreload() {
 }
 
 function createWindow() {
+  const iconPath = path.join(__dirname, '../assets/icons/nerion-icon-512.png');
+
   mainWindow = new BrowserWindow({
     width: 1600,
     height: 900,
@@ -64,6 +66,7 @@ function createWindow() {
     backgroundColor: '#0f172a',
     autoHideMenuBar: true,
     title: 'Nerion Mission Control',
+    icon: iconPath,
     webPreferences: {
       preload: resolvePreload(),
       nodeIntegration: false,
@@ -156,11 +159,23 @@ function ensureTray() {
   if (tray) {
     return;
   }
-  const size = 16;
-  const image = nativeImage.createEmpty();
-  image.resize({ width: size, height: size });
-  tray = new Tray(image);
 
+  // Use platform-appropriate tray icon size
+  const trayIconSize = process.platform === 'darwin' ? 16 : 32;
+  const trayIconPath = path.join(__dirname, `../assets/icons/nerion-icon-${trayIconSize}.png`);
+
+  let trayIcon;
+  try {
+    trayIcon = nativeImage.createFromPath(trayIconPath);
+    if (process.platform === 'darwin') {
+      trayIcon = trayIcon.resize({ width: 16, height: 16 });
+    }
+  } catch (error) {
+    console.error('[HOLO] Failed to load tray icon, using empty image:', error);
+    trayIcon = nativeImage.createEmpty();
+  }
+
+  tray = new Tray(trayIcon);
   updateTrayMenu();
 
   tray.on('click', () => {
