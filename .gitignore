@@ -60,6 +60,18 @@ jarvis_memory/
 # Electron/Frontend cache
 **/out/
 **/build/
+**/dist/
+
+# Electron build artifacts
+app/ui/holo-app/dist/
+
+# Daemon runtime files
+.nerion/daemon.sock
+.nerion/daemon.log
+.nerion/daemon-error.log
+
+# Playwright cache
+.playwright-mcp/
 
 # Project-specific
 app/ui/holo-app/node_modules/
