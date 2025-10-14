@@ -6,6 +6,10 @@
   background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
   border-bottom: 2px solid var(--accent);
   box-shadow: 0 2px 10px var(--accent-soft);
+  position: relative;
+  z-index: 10;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
 .top-bar-left {
@@ -89,4 +93,20 @@
   border-color: var(--accent);
   background: var(--bg-secondary);
   transform: translateY(-2px);
+}
+
+/* Glow Pulse Animation for Training Button */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(34, 211, 238, 0.5);
+    border-color: var(--accent);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(34, 211, 238, 1), 0 0 30px rgba(34, 211, 238, 0.8);
+    border-color: var(--accent-bright);
+  }
+}
+
+.icon-btn.glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
 }

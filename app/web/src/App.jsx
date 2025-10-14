@@ -4,12 +4,22 @@ import ImmuneVitalsPanel from './components/ImmuneVitalsPanel'
 import SignalHealthPanel from './components/SignalHealthPanel'
 import MemorySnapshotPanel from './components/MemorySnapshotPanel'
 import Terminal from './components/Terminal'
+import GenesisView from './components/GenesisView'
+import SettingsPanel from './components/SettingsPanel'
 import ArtifactsPanel from './components/ArtifactsPanel'
-import UpgradeLanePanel from './components/UpgradeLanePanel'
-import LearningTimelinePanel from './components/LearningTimelinePanel'
+import TrainingDashboard from './components/TrainingDashboard'
+import ThoughtProcessPanel from './components/ThoughtProcessPanel'
+import AmbientBackground from './components/AmbientBackground'
 import './App.css'
 
 function App() {
+  const [mode, setMode] = useState('terminal') // 'terminal' or 'genesis'
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [artifactsOpen, setArtifactsOpen] = useState(false)
+  const [trainingOpen, setTrainingOpen] = useState(false)
+  const [trainingNeedsAttention, setTrainingNeedsAttention] = useState(true) // Set to true when training has updates
+  const [theme, setTheme] = useState('dark')
+
   const [systemStatus, setSystemStatus] = useState({
     status: 'healthy',
     uptime: 0,
@@ -75,6 +85,11 @@ function App() {
     return () => ws.close()
   }, [])
 
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+  }, [theme])
+
   // Fetch initial data
   useEffect(() => {
     fetch('/api/health')
@@ -90,26 +105,75 @@ function App() {
 
   return (
     <div className="app">
+      <AmbientBackground />
+
       <TopBar
         status={systemStatus.status}
         uptime={systemStatus.uptime}
+        onSettingsClick={() => setSettingsOpen(true)}
+        onArtifactsClick={() => setArtifactsOpen(true)}
+        onTrainingClick={() => {
+          setTrainingOpen(true)
+          setTrainingNeedsAttention(false) // Clear notification when user opens dashboard
+        }}
+        trainingNeedsAttention={trainingNeedsAttention}
       />
 
-      <div className="status-panels">
-        <ImmuneVitalsPanel {...immune} />
-        <SignalHealthPanel {...signals} />
-        <MemorySnapshotPanel {...memory} />
+      <div className="app-body">
+        {/* Left Sidebar - Status Panels */}
+        <div className="status-panels">
+          <ImmuneVitalsPanel {...immune} />
+          <SignalHealthPanel {...signals} />
+          <MemorySnapshotPanel {...memory} />
+        </div>
+
+        {/* Center - Main Interface */}
+        <div className="app-main">
+          <div className="main-interface">
+            <div className="mode-switcher">
+              <button
+                className={`mode-btn ${mode === 'terminal' ? 'active' : ''}`}
+                onClick={() => setMode('terminal')}
+              >
+                <span className="mode-icon">⌨️</span>
+                Terminal
+              </button>
+              <button
+                className={`mode-btn ${mode === 'genesis' ? 'active' : ''}`}
+                onClick={() => setMode('genesis')}
+              >
+                <span className="mode-icon">🧬</span>
+                Genesis
+              </button>
+            </div>
+
+            <div className="interface-content">
+              {mode === 'terminal' && <Terminal />}
+              {mode === 'genesis' && <GenesisView />}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Sidebar - Thought Process */}
+        <ThoughtProcessPanel />
       </div>
 
-      <div className="main-interface">
-        <Terminal />
-      </div>
+      <SettingsPanel
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        theme={theme}
+        onThemeChange={setTheme}
+      />
 
-      <div className="control-panels">
-        <ArtifactsPanel />
-        <UpgradeLanePanel />
-        <LearningTimelinePanel />
-      </div>
+      <ArtifactsPanel
+        isOpen={artifactsOpen}
+        onClose={() => setArtifactsOpen(false)}
+      />
+
+      <TrainingDashboard
+        isOpen={trainingOpen}
+        onClose={() => setTrainingOpen(false)}
+      />
     </div>
   )
 }

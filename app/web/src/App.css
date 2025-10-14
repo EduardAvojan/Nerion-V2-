@@ -6,36 +6,117 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 
-/* Status Panels Row */
-.status-panels {
+.app-body {
+  flex: 1;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  padding: 16px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  grid-template-columns: 300px 1fr 350px;
+  gap: 0;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
 }
 
-/* Main Interface - Terminal */
+
+/* Left Sidebar - Status Panels */
+.status-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  height: 100%;
+}
+
+/* Make panels expand to fill available space */
+.status-panels .panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.status-panels .panel .panel-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* Center - Main Interface */
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Main Interface - Terminal/Genesis */
 .main-interface {
   flex: 1;
-  padding: 16px;
+  padding: 12px;
   overflow: hidden;
   background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
-/* Control Panels Row */
-.control-panels {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  padding: 16px;
+/* Mode Switcher */
+.mode-switcher {
+  display: flex;
+  gap: 8px;
+  padding: 4px;
   background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
-  max-height: 250px;
-  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: fit-content;
+  margin: 0 auto;
+}
+
+.mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.mode-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.mode-btn.active {
+  background: var(--accent);
+  color: var(--bg-primary);
+  box-shadow: 0 2px 8px rgba(34, 211, 238, 0.3);
+}
+
+.mode-icon {
+  font-size: 16px;
+}
+
+/* Interface Content Container */
+.interface-content {
+  flex: 1;
+  overflow: hidden;
+  border-radius: 8px;
 }
 
 /* Panel Base Styles */
@@ -43,9 +124,11 @@
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 16px;
+  padding: 12px;
   box-shadow: var(--shadow);
   transition: all 0.2s ease;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
 .panel:hover {
@@ -57,18 +140,18 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
 
 .panel-title {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--accent);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .panel-subtitle {
@@ -131,22 +214,22 @@
 
 /* Stat Display */
 .stat {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .stat-value {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 /* List Styles */
@@ -157,10 +240,11 @@
 }
 
 .item-list li {
-  padding: 8px 0;
+  padding: 6px 0;
   border-bottom: 1px solid var(--border);
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
+  line-height: 1.4;
 }
 
 .item-list li:last-child {
@@ -201,17 +285,53 @@
   color: var(--bg-primary);
 }
 
+/* Scrollbar Styling for Sidebars */
+.status-panels::-webkit-scrollbar {
+  width: 8px;
+}
+
+.status-panels::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+.status-panels::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.status-panels::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
 /* Responsive */
-@media (max-width: 1200px) {
-  .status-panels,
-  .control-panels {
-    grid-template-columns: repeat(2, 1fr);
+@media (max-width: 1400px) {
+  .app-body {
+    grid-template-columns: 280px 1fr 320px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .app-body {
+    grid-template-columns: 1fr;
+  }
+
+  .status-panels {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 200px;
+  }
+
+  .thought-panel {
+    display: none;
   }
 }
 
 @media (max-width: 768px) {
-  .status-panels,
-  .control-panels {
+  .status-panels {
     grid-template-columns: 1fr;
+    max-height: 300px;
   }
 }

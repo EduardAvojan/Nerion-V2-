@@ -32,6 +32,20 @@
   gap: 6px;
 }
 
+.status-indicator.status-warning {
+  background: var(--warning);
+  animation: pulse-warning 2s ease-in-out infinite;
+}
+
+@keyframes pulse-warning {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 .terminal {
   flex: 1;
   padding: 10px;
@@ -41,8 +55,14 @@
 /* xterm.js overrides */
 .terminal .xterm {
   height: 100%;
+  background: transparent !important;
 }
 
 .terminal .xterm-viewport {
-  overflow-y: auto !important;
+  overflow-y: scroll !important;
+  background: transparent !important;
+}
+
+.terminal .xterm-screen {
+  background: transparent !important;
 }

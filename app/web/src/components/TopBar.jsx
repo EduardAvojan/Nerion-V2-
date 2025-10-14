@@ -1,7 +1,7 @@
 import React from 'react'
 import './TopBar.css'
 
-export default function TopBar({ status, uptime }) {
+export default function TopBar({ status, uptime, onSettingsClick, onArtifactsClick, onTrainingClick, trainingNeedsAttention }) {
   const formatUptime = (seconds) => {
     const days = Math.floor(seconds / 86400)
     const hours = Math.floor((seconds % 86400) / 3600)
@@ -27,7 +27,15 @@ export default function TopBar({ status, uptime }) {
       </div>
 
       <div className="top-bar-right">
-        <button className="icon-btn" title="Settings">⚙️</button>
+        <button className="icon-btn" title="Artifacts" onClick={onArtifactsClick}>📄</button>
+        <button
+          className={`icon-btn ${trainingNeedsAttention ? 'glow-pulse' : ''}`}
+          title="Training Dashboard"
+          onClick={onTrainingClick}
+        >
+          📊
+        </button>
+        <button className="icon-btn" title="Settings" onClick={onSettingsClick}>⚙️</button>
         <button className="icon-btn" title="Help">❓</button>
       </div>
     </div>
