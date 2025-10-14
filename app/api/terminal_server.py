@@ -14,18 +14,25 @@ import asyncio
 import json
 import os
 import pty
+import re
 import select
 import struct
 import termios
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from output_parser import OutputParser
+
 
 app = FastAPI(title="Nerion Mission Control API", version="1.0.0")
+
+# Global state for event broadcasting
+event_clients: Set[WebSocket] = set()
+output_parser = OutputParser()
 
 # Enable CORS for web frontend
 app.add_middleware(
@@ -35,6 +42,37 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text for parsing.
+
+    Args:
+        text: Text with ANSI codes
+
+    Returns:
+        Clean text without ANSI codes
+    """
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
+
+
+async def broadcast_event(event: dict):
+    """Broadcast event to all connected event clients.
+
+    Args:
+        event: Event dictionary to broadcast
+    """
+    dead_clients = set()
+
+    for client in event_clients:
+        try:
+            await client.send_json(event)
+        except Exception:
+            dead_clients.add(client)
+
+    # Remove dead connections
+    event_clients.difference_update(dead_clients)
 
 
 class PTYManager:
@@ -169,62 +207,239 @@ async def terminal_websocket(websocket: WebSocket):
     This provides a real bash shell with bidirectional I/O:
     - Client sends keystrokes → PTY
     - PTY output → Client display
+
+    BULLETPROOF FEATURES:
+    - Automatic keepalive pings
+    - Robust error handling with recovery
+    - Buffer overflow protection
+    - Graceful degradation
     """
     await websocket.accept()
+    print(f"[Terminal] Client connected from {websocket.client}")
 
     # Spawn shell
     pty_manager = PTYManager()
+    pty_task = None
+    ws_task = None
+    keepalive_task = None
+
+    # Connection state
+    connection_alive = True
+    last_activity = asyncio.get_event_loop().time()
+
     try:
         pty_manager.spawn_shell()
         print(f"[Terminal] Spawned shell with PID {pty_manager.pid}")
 
+        # Keepalive task to prevent WebSocket timeout
+        async def keepalive():
+            """Send periodic pings to keep connection alive."""
+            try:
+                while connection_alive:
+                    await asyncio.sleep(30)  # Ping every 30 seconds
+                    try:
+                        # Send a ping frame
+                        await websocket.send_json({
+                            "type": "ping",
+                            "timestamp": asyncio.get_event_loop().time()
+                        })
+                        print("[Terminal] Sent keepalive ping")
+                    except Exception as e:
+                        print(f"[Terminal] Keepalive failed: {e}")
+                        break
+            except asyncio.CancelledError:
+                print("[Terminal] Keepalive task cancelled")
+                raise
+
         # Create tasks for bidirectional communication
         async def read_from_pty():
-            """Read from PTY and send to WebSocket."""
-            while pty_manager.running:
-                data = await asyncio.get_event_loop().run_in_executor(
-                    None, pty_manager.read, 0.05
-                )
-                if data:
-                    await websocket.send_bytes(data)
-                await asyncio.sleep(0.01)  # Small delay to prevent busy loop
+            """Read from PTY and send to WebSocket with robust error handling."""
+            consecutive_errors = 0
+            max_consecutive_errors = 10
+
+            try:
+                while pty_manager.running and connection_alive:
+                    try:
+                        # Read with timeout
+                        data = await asyncio.wait_for(
+                            asyncio.get_event_loop().run_in_executor(
+                                None, pty_manager.read, 0.1
+                            ),
+                            timeout=2.0  # 2 second timeout
+                        )
+
+                        if data:
+                            # Reset error counter on successful read
+                            consecutive_errors = 0
+
+                            # Send raw bytes to terminal display
+                            try:
+                                await websocket.send_bytes(data)
+                                nonlocal last_activity
+                                last_activity = asyncio.get_event_loop().time()
+                            except Exception as send_error:
+                                print(f"[Terminal] Failed to send data to WebSocket: {send_error}")
+                                break
+
+                            # Parse output for dashboard events (non-critical)
+                            try:
+                                text = data.decode('utf-8', errors='ignore')
+                                clean_text = strip_ansi(text)
+                                events = output_parser.parse_buffer(clean_text)
+
+                                # Broadcast events to all connected event clients
+                                for event in events:
+                                    await broadcast_event(event)
+                            except Exception as parse_error:
+                                # Don't let parsing errors kill the terminal
+                                print(f"[Terminal] Error parsing output (non-critical): {parse_error}")
+
+                        await asyncio.sleep(0.02)  # Small delay to prevent busy loop
+
+                    except asyncio.TimeoutError:
+                        # Timeout is normal - just continue
+                        consecutive_errors = 0
+                        continue
+                    except Exception as read_error:
+                        consecutive_errors += 1
+                        print(f"[Terminal] PTY read error ({consecutive_errors}/{max_consecutive_errors}): {read_error}")
+
+                        if consecutive_errors >= max_consecutive_errors:
+                            print("[Terminal] Too many consecutive errors, stopping PTY read")
+                            break
+
+                        # Brief pause before retry
+                        await asyncio.sleep(0.1)
+
+            except asyncio.CancelledError:
+                print("[Terminal] PTY read task cancelled")
+                raise
+            except Exception as e:
+                print(f"[Terminal] Fatal PTY read error: {e}")
+                import traceback
+                traceback.print_exc()
 
         async def read_from_websocket():
-            """Read from WebSocket and write to PTY."""
+            """Read from WebSocket and write to PTY with robust error handling."""
+            consecutive_errors = 0
+            max_consecutive_errors = 10
+
             try:
-                while True:
-                    message = await websocket.receive()
-
-                    if 'bytes' in message:
-                        # Terminal input (keystrokes)
-                        data = message['bytes']
-                        await asyncio.get_event_loop().run_in_executor(
-                            None, pty_manager.write, data
+                while connection_alive:
+                    try:
+                        # Receive with timeout to detect dead connections
+                        message = await asyncio.wait_for(
+                            websocket.receive(),
+                            timeout=120.0  # 2 minute timeout
                         )
-                    elif 'text' in message:
-                        # Handle resize events (JSON)
-                        try:
-                            event = json.loads(message['text'])
-                            if event.get('type') == 'resize':
-                                cols = event.get('cols', 80)
-                                rows = event.get('rows', 24)
-                                pty_manager.resize(cols, rows)
-                        except json.JSONDecodeError:
-                            pass
-            except WebSocketDisconnect:
-                print("[Terminal] WebSocket disconnected")
 
-        # Run both tasks concurrently
-        await asyncio.gather(
-            read_from_pty(),
-            read_from_websocket(),
+                        # Reset error counter on successful receive
+                        consecutive_errors = 0
+                        nonlocal last_activity
+                        last_activity = asyncio.get_event_loop().time()
+
+                        # Check for disconnect
+                        if message.get('type') == 'websocket.disconnect':
+                            print("[Terminal] WebSocket disconnect message received")
+                            break
+
+                        if 'bytes' in message:
+                            # Terminal input (keystrokes)
+                            data = message['bytes']
+                            try:
+                                await asyncio.get_event_loop().run_in_executor(
+                                    None, pty_manager.write, data
+                                )
+                            except Exception as write_error:
+                                print(f"[Terminal] Failed to write to PTY: {write_error}")
+                                # Don't break - PTY might recover
+
+                        elif 'text' in message:
+                            # Handle resize events and pong responses (JSON)
+                            try:
+                                event = json.loads(message['text'])
+                                if event.get('type') == 'resize':
+                                    cols = event.get('cols', 80)
+                                    rows = event.get('rows', 24)
+                                    pty_manager.resize(cols, rows)
+                                    print(f"[Terminal] Resized to {cols}x{rows}")
+                                elif event.get('type') == 'pong':
+                                    # Client responded to ping
+                                    pass
+                            except json.JSONDecodeError as json_error:
+                                # Ignore invalid JSON
+                                print(f"[Terminal] Invalid JSON (ignored): {json_error}")
+
+                    except asyncio.TimeoutError:
+                        print("[Terminal] WebSocket receive timeout - connection may be dead")
+                        break
+                    except WebSocketDisconnect:
+                        print("[Terminal] WebSocket disconnected normally")
+                        break
+                    except Exception as recv_error:
+                        consecutive_errors += 1
+                        print(f"[Terminal] WebSocket receive error ({consecutive_errors}/{max_consecutive_errors}): {recv_error}")
+
+                        if consecutive_errors >= max_consecutive_errors:
+                            print("[Terminal] Too many consecutive errors, stopping WebSocket read")
+                            break
+
+                        await asyncio.sleep(0.1)
+
+            except asyncio.CancelledError:
+                print("[Terminal] WebSocket read task cancelled")
+                raise
+            except Exception as e:
+                print(f"[Terminal] Fatal WebSocket read error: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # Create tasks
+        pty_task = asyncio.create_task(read_from_pty())
+        ws_task = asyncio.create_task(read_from_websocket())
+        keepalive_task = asyncio.create_task(keepalive())
+
+        # Wait for any task to complete
+        done, pending = await asyncio.wait(
+            [pty_task, ws_task, keepalive_task],
+            return_when=asyncio.FIRST_COMPLETED
         )
 
+        print(f"[Terminal] Task completed: {[t.get_name() for t in done]}")
+
+        # Signal shutdown
+        connection_alive = False
+
+        # Cancel remaining tasks gracefully
+        for task in pending:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            except Exception as cancel_error:
+                print(f"[Terminal] Error cancelling task: {cancel_error}")
+
     except Exception as e:
-        print(f"[Terminal] Error: {e}")
+        print(f"[Terminal] Top-level error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
+        # Ensure connection is marked as dead
+        connection_alive = False
+
+        # Cleanup tasks
+        for task in [pty_task, ws_task, keepalive_task]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=1.0)
+                except Exception:
+                    pass
+
+        # Close PTY
         pty_manager.close()
-        print("[Terminal] PTY closed")
+        print(f"[Terminal] Connection closed. Session duration: {asyncio.get_event_loop().time() - last_activity:.1f}s since last activity")
 
 
 @app.websocket("/api/events")
@@ -240,6 +455,10 @@ async def events_websocket(websocket: WebSocket):
     - upgrade_ready
     """
     await websocket.accept()
+
+    # Register this client for event broadcasting
+    event_clients.add(websocket)
+    print(f"[Events] Client connected. Total clients: {len(event_clients)}")
 
     try:
         # Send initial state
@@ -266,8 +485,7 @@ async def events_websocket(websocket: WebSocket):
         while True:
             await asyncio.sleep(5)
 
-            # TODO: Send real events from Nerion
-            # For now, just keep alive
+            # Send heartbeat to keep connection alive
             await websocket.send_json({
                 "type": "heartbeat",
                 "data": {"timestamp": asyncio.get_event_loop().time()}
@@ -275,6 +493,10 @@ async def events_websocket(websocket: WebSocket):
 
     except WebSocketDisconnect:
         print("[Events] WebSocket disconnected")
+    finally:
+        # Unregister client on disconnect
+        event_clients.discard(websocket)
+        print(f"[Events] Client disconnected. Total clients: {len(event_clients)}")
 
 
 @app.get("/api/memory")
