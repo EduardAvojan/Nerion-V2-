@@ -8,6 +8,7 @@ let mainWindow;
 let tray;
 let pythonProcess;
 let pythonBuffer = '';
+let terminalServerProcess;
 let daemonSocket = null;
 let daemonStatus = { health: 'unknown', status: 'disconnected' };
 let isQuitting = false;
@@ -426,11 +427,71 @@ function cleanupPython() {
   pythonProcess = null;
 }
 
+function spawnTerminalServer() {
+  if (terminalServerProcess) {
+    return terminalServerProcess;
+  }
+
+  const projectRoot = path.resolve(__dirname, '../../../..');
+  const venvPy = path.join(projectRoot, '.venv', 'bin', process.platform === 'win32' ? 'python.exe' : 'python');
+  const pythonCmd = process.env.NERION_PYTHON || (require('fs').existsSync(venvPy) ? venvPy : 'python3');
+  const terminalServerPath = path.join(projectRoot, 'app', 'api', 'terminal_server.py');
+
+  console.log('[HOLO] Starting terminal server:', terminalServerPath);
+
+  const env = {
+    ...process.env,
+    PYTHONPATH: [projectRoot, process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter),
+  };
+
+  terminalServerProcess = spawn(pythonCmd, [terminalServerPath], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: projectRoot,
+  });
+
+  terminalServerProcess.stdout.on('data', (chunk) => {
+    console.log('[HOLO][terminal-server]', chunk.toString().trim());
+  });
+
+  terminalServerProcess.stderr.on('data', (chunk) => {
+    console.error('[HOLO][terminal-server]', chunk.toString().trim());
+  });
+
+  terminalServerProcess.on('exit', (code, signal) => {
+    console.log('[HOLO] Terminal server exited', { code, signal });
+    terminalServerProcess = null;
+  });
+
+  terminalServerProcess.on('error', (err) => {
+    console.error('[HOLO] Failed to start terminal server', err);
+  });
+
+  return terminalServerProcess;
+}
+
+function cleanupTerminalServer() {
+  if (!terminalServerProcess) {
+    return;
+  }
+  try {
+    terminalServerProcess.kill();
+  } catch (error) {
+    console.error('[HOLO] Error while terminating terminal server', error);
+  }
+  terminalServerProcess = null;
+}
+
 app.on('ready', () => {
   createWindow();
   ensureTray();
   registerIpcHandlers();
   registerShortcuts();
+
+  // Start terminal server for Mission Control terminal
+  spawnTerminalServer();
+
+  // Start Python bridge for voice/chat functionality
   getShellEnv().then(shellEnv => {
     spawnPythonBridge(shellEnv);
   }).catch(() => {
@@ -443,6 +504,7 @@ app.on('before-quit', () => {
   isQuitting = true;
   unregisterShortcuts();
   cleanupPython();
+  cleanupTerminalServer();
 
   // Send shutdown command to daemon
   if (daemonSocket && daemonSocket.writable) {
