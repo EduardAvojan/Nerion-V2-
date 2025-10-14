@@ -1,15 +1,21 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut } = require('electron');
 const path = require('path');
 const { spawn, exec } = require('child_process');
+const net = require('net');
+const os = require('os');
 
 let mainWindow;
 let tray;
 let pythonProcess;
 let pythonBuffer = '';
+let daemonSocket = null;
+let daemonStatus = { health: 'unknown', status: 'disconnected' };
+let isQuitting = false;
 
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 720;
 const PTT_ACCELERATOR = process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space';
+const DAEMON_SOCKET_PATH = path.join(os.homedir(), '.nerion', 'daemon.sock');
 
 function getShellEnv() {
   return new Promise((resolve, reject) => {
@@ -51,13 +57,13 @@ function resolvePreload() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: DEFAULT_WIDTH,
-    height: DEFAULT_HEIGHT,
-    minWidth: 960,
-    minHeight: 600,
-    backgroundColor: '#020617',
+    width: 1600,
+    height: 900,
+    minWidth: 1280,
+    minHeight: 720,
+    backgroundColor: '#0f172a',
     autoHideMenuBar: true,
-    title: 'Nerion HOLO',
+    title: 'Nerion Mission Control',
     webPreferences: {
       preload: resolvePreload(),
       nodeIntegration: false,
@@ -65,25 +71,57 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  // Load the built React app
+  const distPath = path.join(__dirname, '../dist/index.html');
+  mainWindow.loadFile(distPath);
+
+  // Minimize to tray instead of closing
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+
+      // Show notification that Nerion is still running
+      if (tray && !mainWindow.isVisible()) {
+        tray.displayBalloon({
+          title: 'Nerion Still Running',
+          content: 'Nerion immune system continues monitoring in the background. Click the tray icon to reopen.'
+        });
+      }
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // Connect to daemon
+  connectToDaemon();
 }
 
-function ensureTray() {
-  if (tray) {
-    return;
-  }
-  const size = 16;
-  const image = nativeImage.createEmpty();
-  image.resize({ width: size, height: size });
-  tray = new Tray(image);
-  tray.setToolTip('Nerion HOLO');
+function updateTrayMenu() {
+  if (!tray) return;
+
+  const statusIcon = daemonStatus.health === 'healthy' ? '🟢' :
+                     daemonStatus.health === 'warning' ? '🟡' :
+                     daemonStatus.health === 'critical' ? '🔴' : '⚪';
+
   const menu = Menu.buildFromTemplate([
     {
-      label: 'Show',
+      label: `${statusIcon} Nerion Immune System`,
+      enabled: false,
+    },
+    {
+      label: `Status: ${daemonStatus.status}`,
+      enabled: false,
+    },
+    {
+      label: `Health: ${daemonStatus.health}`,
+      enabled: false,
+    },
+    { type: 'separator' },
+    {
+      label: 'Show Mission Control',
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -94,7 +132,7 @@ function ensureTray() {
       },
     },
     {
-      label: 'Hide',
+      label: 'Hide Mission Control',
       click: () => {
         if (mainWindow) {
           mainWindow.hide();
@@ -103,13 +141,28 @@ function ensureTray() {
     },
     { type: 'separator' },
     {
-      label: 'Quit Nerion',
+      label: 'Quit Nerion (stops immune system)',
       click: () => {
+        isQuitting = true;
         app.quit();
       },
     },
   ]);
   tray.setContextMenu(menu);
+  tray.setToolTip(`Nerion: ${daemonStatus.health}`);
+}
+
+function ensureTray() {
+  if (tray) {
+    return;
+  }
+  const size = 16;
+  const image = nativeImage.createEmpty();
+  image.resize({ width: size, height: size });
+  tray = new Tray(image);
+
+  updateTrayMenu();
+
   tray.on('click', () => {
     if (!mainWindow) {
       createWindow();
@@ -117,8 +170,88 @@ function ensureTray() {
       mainWindow.hide();
     } else {
       mainWindow.show();
+      mainWindow.focus();
     }
   });
+}
+
+function connectToDaemon() {
+  if (daemonSocket) {
+    daemonSocket.destroy();
+  }
+
+  console.log('[HOLO] Connecting to Nerion daemon...');
+
+  daemonSocket = net.createConnection(DAEMON_SOCKET_PATH, () => {
+    console.log('[HOLO] Connected to Nerion daemon');
+    daemonStatus.status = 'connected';
+    updateTrayMenu();
+
+    // Request initial status
+    const message = JSON.stringify({ type: 'get_status' }) + '\n';
+    daemonSocket.write(message);
+  });
+
+  let buffer = '';
+  daemonSocket.on('data', (data) => {
+    buffer += data.toString();
+
+    // Process complete messages (newline-delimited JSON)
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // Keep incomplete line in buffer
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      try {
+        const message = JSON.parse(line);
+        handleDaemonMessage(message);
+      } catch (err) {
+        console.error('[HOLO] Failed to parse daemon message:', err);
+      }
+    }
+  });
+
+  daemonSocket.on('error', (err) => {
+    console.error('[HOLO] Daemon connection error:', err.message);
+    daemonStatus.status = 'disconnected';
+    daemonStatus.health = 'unknown';
+    updateTrayMenu();
+
+    // Retry connection after 5 seconds
+    setTimeout(connectToDaemon, 5000);
+  });
+
+  daemonSocket.on('close', () => {
+    console.log('[HOLO] Daemon connection closed');
+    daemonStatus.status = 'disconnected';
+    updateTrayMenu();
+    daemonSocket = null;
+
+    // Retry connection after 5 seconds
+    setTimeout(connectToDaemon, 5000);
+  });
+}
+
+function handleDaemonMessage(message) {
+  const { type, data } = message;
+
+  if (type === 'status' || type === 'status_update') {
+    daemonStatus = {
+      health: data.health || 'unknown',
+      status: data.status || 'unknown',
+      threats: data.threats_detected || 0,
+      fixes: data.auto_fixes_applied || 0,
+      files: data.files_monitored || 0,
+      training: data.gnn_training || false,
+    };
+    updateTrayMenu();
+
+    // Forward to renderer
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('daemon-status', data);
+    }
+  }
 }
 
 function splitArgs(source) {
@@ -292,8 +425,15 @@ app.on('ready', () => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   unregisterShortcuts();
   cleanupPython();
+
+  // Send shutdown command to daemon
+  if (daemonSocket && daemonSocket.writable) {
+    const message = JSON.stringify({ type: 'shutdown' }) + '\n';
+    daemonSocket.write(message);
+  }
 });
 
 app.on('window-all-closed', () => {

@@ -1,0 +1,112 @@
+.top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  border-bottom: 2px solid var(--accent);
+  box-shadow: 0 2px 10px var(--accent-soft);
+  position: relative;
+  z-index: 10;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.top-bar-left {
+  flex: 1;
+}
+
+.app-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--accent);
+  text-shadow: 0 0 10px var(--accent-soft);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.app-icon {
+  font-size: 28px;
+}
+
+.app-subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.top-bar-center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 24px;
+}
+
+.system-status {
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-radius: 20px;
+  background: rgba(0, 217, 255, 0.1);
+  border: 1px solid var(--accent);
+}
+
+.system-status.status-healthy {
+  color: var(--success);
+  border-color: var(--success);
+  background: rgba(0, 255, 136, 0.1);
+}
+
+.uptime {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.top-bar-right {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.icon-btn:hover {
+  border-color: var(--accent);
+  background: var(--bg-secondary);
+  transform: translateY(-2px);
+}
+
+/* Glow Pulse Animation for Training Button */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(34, 211, 238, 0.5);
+    border-color: var(--accent);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(34, 211, 238, 1), 0 0 30px rgba(34, 211, 238, 0.8);
+    border-color: var(--accent-bright);
+  }
+}
+
+.icon-btn.glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}

@@ -1,0 +1,100 @@
+/* Nerion Mission Control - Global Styles */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Nerion Theme Colors - Dark Mode */
+  --bg-primary: rgba(10, 14, 20, 0.3);
+  --bg-secondary: rgba(26, 31, 46, 0.4);
+  --bg-tertiary: rgba(15, 20, 25, 0.5);
+
+  --accent: #00d9ff;
+  --accent-soft: rgba(0, 217, 255, 0.3);
+  --accent-bright: #66eeff;
+
+  --success: #00ff88;
+  --warning: #ffcc00;
+  --error: #ff3333;
+
+  --text-primary: #e0e0e0;
+  --text-secondary: #888888;
+  --text-dim: #666666;
+
+  --border: rgba(0, 217, 255, 0.2);
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 20px var(--accent-soft);
+}
+
+/* Light Theme */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #fafafa;
+
+  --accent: #0099cc;
+  --accent-soft: rgba(0, 153, 204, 0.2);
+  --accent-bright: #00bbff;
+
+  --success: #00cc66;
+  --warning: #ff9900;
+  --error: #ff3333;
+
+  --text-primary: #1a1a1a;
+  --text-secondary: #666666;
+  --text-dim: #999999;
+
+  --border: rgba(0, 153, 204, 0.2);
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 0 20px var(--accent-soft);
+}
+
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #0a0e14;
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+code, pre {
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-bright);
+}
+
+/* Utility classes */
+.status-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.status-online { background: var(--success); }
+.status-warning { background: var(--warning); }
+.status-error { background: var(--error); }

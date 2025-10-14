@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nerion Terminal Test</title>
+
+    <!-- xterm.js CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0a0e14;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #e0e0e0;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1f2e 0%, #0f1419 100%);
+            padding: 20px;
+            border-bottom: 2px solid #00d9ff;
+            box-shadow: 0 2px 10px rgba(0, 217, 255, 0.3);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            color: #00d9ff;
+            text-shadow: 0 0 10px rgba(0, 217, 255, 0.5);
+        }
+
+        .status {
+            margin-top: 5px;
+            font-size: 14px;
+            color: #888;
+        }
+
+        .status.connected {
+            color: #00ff88;
+        }
+
+        .status.disconnected {
+            color: #ff4444;
+        }
+
+        #terminal-container {
+            padding: 20px;
+            height: calc(100vh - 100px);
+        }
+
+        #terminal {
+            height: 100%;
+            background: #0a0e14;
+            border-radius: 8px;
+            padding: 10px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧬 Nerion Mission Control - Terminal Test</h1>
+        <div id="status" class="status disconnected">Status: Disconnected</div>
+    </div>
+
+    <div id="terminal-container">
+        <div id="terminal"></div>
+    </div>
+
+    <!-- xterm.js library -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+
+    <script>
+        // Initialize terminal
+        const term = new Terminal({
+            cursorBlink: true,
+            fontSize: 14,
+            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+            theme: {
+                background: '#0a0e14',
+                foreground: '#e0e0e0',
+                cursor: '#00d9ff',
+                cursorAccent: '#0a0e14',
+                selection: 'rgba(0, 217, 255, 0.3)',
+                black: '#000000',
+                red: '#ff3333',
+                green: '#00ff88',
+                yellow: '#ffcc00',
+                blue: '#00aaff',
+                magenta: '#ff66ff',
+                cyan: '#00d9ff',
+                white: '#ffffff',
+                brightBlack: '#666666',
+                brightRed: '#ff6666',
+                brightGreen: '#66ffaa',
+                brightYellow: '#ffdd66',
+                brightBlue: '#66bbff',
+                brightMagenta: '#ff99ff',
+                brightCyan: '#66eeff',
+                brightWhite: '#ffffff'
+            }
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+
+        term.open(document.getElementById('terminal'));
+        fitAddon.fit();
+
+        // Connect to WebSocket
+        const ws = new WebSocket('ws://localhost:8000/api/terminal');
+        ws.binaryType = 'arraybuffer';
+
+        const statusEl = document.getElementById('status');
+
+        ws.onopen = () => {
+            console.log('[WebSocket] Connected');
+            statusEl.textContent = 'Status: Connected ✓';
+            statusEl.className = 'status connected';
+
+            // Send terminal size
+            ws.send(JSON.stringify({
+                type: 'resize',
+                cols: term.cols,
+                rows: term.rows
+            }));
+        };
+
+        ws.onclose = () => {
+            console.log('[WebSocket] Disconnected');
+            statusEl.textContent = 'Status: Disconnected';
+            statusEl.className = 'status disconnected';
+            term.write('\r\n\n[Connection closed]\r\n');
+        };
+
+        ws.onerror = (error) => {
+            console.error('[WebSocket] Error:', error);
+            statusEl.textContent = 'Status: Error';
+            statusEl.className = 'status disconnected';
+        };
+
+        ws.onmessage = (event) => {
+            // Terminal output from server
+            const data = new Uint8Array(event.data);
+            term.write(data);
+        };
+
+        // Send user input to server
+        term.onData(data => {
+            if (ws.readyState === WebSocket.OPEN) {
+                // Convert string to bytes
+                const encoder = new TextEncoder();
+                ws.send(encoder.encode(data));
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            fitAddon.fit();
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'resize',
+                    cols: term.cols,
+                    rows: term.rows
+                }));
+            }
+        });
+
+        // Welcome message
+        term.writeln('\x1b[1;36m╔════════════════════════════════════════════════════╗\x1b[0m');
+        term.writeln('\x1b[1;36m║  🧬 NERION MISSION CONTROL - Terminal Test        ║\x1b[0m');
+        term.writeln('\x1b[1;36m╚════════════════════════════════════════════════════╝\x1b[0m');
+        term.writeln('');
+        term.writeln('\x1b[1;33mConnecting to terminal server...\x1b[0m');
+        term.writeln('');
+    </script>
+</body>
+</html>
