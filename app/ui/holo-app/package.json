@@ -1,20 +1,31 @@
 {
   "name": "nerion-holo",
   "version": "0.1.0",
-  "description": "Electron shell for Nerion's futuristic UI.",
+  "description": "Electron shell for Nerion Mission Control",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron ."
+    "dev": "electron .",
+    "build:react": "vite build",
+    "watch:react": "vite build --watch"
   },
   "keywords": [
     "nerion",
     "electron",
-    "ui"
+    "ui",
+    "mission-control"
   ],
   "author": "Nerion Team",
   "license": "MIT",
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0"
+  },
   "devDependencies": {
-    "electron": "^38.1.2"
+    "electron": "^38.1.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
   }
 }
