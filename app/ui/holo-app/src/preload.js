@@ -1,5 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+console.log('[PRELOAD] Script loaded successfully');
+console.log('[PRELOAD] contextBridge available:', !!contextBridge);
+
 function safeSend(type, payload = {}) {
   if (!type || typeof type !== 'string') {
     throw new Error('nerion.send requires a message type');
@@ -25,3 +28,5 @@ contextBridge.exposeInMainWorld('nerion', {
     return subscribe('nerion-status', handler);
   }
 });
+
+console.log('[PRELOAD] window.nerion exposed successfully');

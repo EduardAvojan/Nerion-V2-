@@ -42,6 +42,30 @@ export default function GenesisView() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Listen for REAL Nerion responses
+  useEffect(() => {
+    if (!window.nerion?.onEvent) return
+
+    const unsubscribe = window.nerion.onEvent((data) => {
+      // Listen for chat_turn events (Nerion's response format)
+      if (data.type === 'chat_turn' && data.payload?.role === 'assistant') {
+        const text = data.payload.text
+        if (text) {
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            text: text
+          }])
+        }
+      }
+    })
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe()
+      }
+    }
+  }, [])
+
   // Simulate phase progression
   useEffect(() => {
     const phases = ['Research', 'Planning', 'Implementation', 'Validation']
@@ -63,13 +87,27 @@ export default function GenesisView() {
     // Add user message
     setMessages(prev => [...prev, { role: 'user', text: inputValue }])
 
-    // Simulate Genesis response
-    setTimeout(() => {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        text: `I'm analyzing your request: "${inputValue}". Starting experiments to validate the approach...`
-      }])
-    }, 1000)
+    // Send to REAL Nerion via IPC
+    console.log('[Genesis] window.nerion available:', !!window.nerion)
+    console.log('[Genesis] window.nerion:', window.nerion)
+
+    try {
+      if (!window.nerion || !window.nerion.send) {
+        throw new Error('window.nerion.send not available')
+      }
+      console.log('[Genesis] Sending message to Nerion:', inputValue)
+      window.nerion.send('chat', { text: inputValue })
+      console.log('[Genesis] Message sent successfully')
+    } catch (error) {
+      console.error('[Genesis] Failed to send message:', error)
+      // Fallback to fake response if IPC not available
+      setTimeout(() => {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          text: `[Offline Mode] I'm analyzing your request: "${inputValue}". Starting experiments to validate the approach...`
+        }])
+      }, 1000)
+    }
 
     setInputValue('')
   }
