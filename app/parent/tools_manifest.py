@@ -77,10 +77,20 @@ class ToolsManifest(BaseModel):
                 when = "use for open-ended queries or when no specific URL is provided; retrieve a small set of recent, reputable sources"
             elif t.name == "rename_symbol":
                 when = "use to plan safe code renames (module/attribute) across the repo; prefer preview before apply"
+            elif t.name == "list_recent_files":
+                when = "use when user asks about recently modified/changed/updated files in the repository"
+            elif t.name == "find_files":
+                when = "use when user asks to find files by name or pattern"
+            elif t.name == "read_file":
+                when = "use when user wants to view or read the contents of a specific file"
             else:
                 # Fallback on naming conventions
                 if t.name.startswith("read_"):
                     when = "use to read a single resource of that type"
+                elif t.name.startswith("list_"):
+                    when = "use to list or show multiple items of that type"
+                elif t.name.startswith("find_"):
+                    when = "use to search for items of that type"
                 elif t.name.endswith("search"):
                     when = "use for general search in that domain"
             if when:
@@ -90,7 +100,26 @@ class ToolsManifest(BaseModel):
 def load_tools_manifest_from_yaml(yaml_path: str) -> ToolsManifest:
     with open(yaml_path, 'r') as f:
         data = yaml.safe_load(f)
-    return ToolsManifest(**data)
+
+    # Convert args dict to params list for each tool
+    tools_list = []
+    for tool_data in data.get('tools', []):
+        # Extract args if present and convert to params
+        args_dict = tool_data.pop('args', None)
+        params_list = []
+        if args_dict and isinstance(args_dict, dict):
+            for arg_name, arg_desc in args_dict.items():
+                # Parse arg_desc to extract type if specified (e.g., "int: description")
+                # For now, default to string type
+                params_list.append(ToolParam(
+                    name=arg_name,
+                    type='string',
+                    description=arg_desc
+                ))
+        tool_data['params'] = params_list
+        tools_list.append(tool_data)
+
+    return ToolsManifest(tools=tools_list)
 
 # Example builtin manifest
 builtin_manifest_yaml = """

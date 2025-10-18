@@ -19,6 +19,7 @@ const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 720;
 const PTT_ACCELERATOR = process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space';
 const DAEMON_SOCKET_PATH = path.join(os.homedir(), '.nerion', 'daemon.sock');
+const SETTINGS_PATH = path.join(os.homedir(), '.nerion', 'ui-settings.json');
 
 function getShellEnv() {
   return new Promise((resolve, reject) => {
@@ -430,7 +431,12 @@ function spawnPythonBridge(shellEnv = {}) {
 
 function dispatchToRenderer(message) {
   if (mainWindow && mainWindow.webContents) {
+    // Debug logging to trace event forwarding
+    const eventType = message && message.type ? message.type : 'unknown';
+    console.log(`[HOLO] Dispatching to renderer: ${eventType}`);
     mainWindow.webContents.send('nerion-event', message);
+  } else {
+    console.warn('[HOLO] Cannot dispatch - mainWindow not ready:', { hasWindow: !!mainWindow, hasWebContents: !!(mainWindow && mainWindow.webContents) });
   }
 }
 
@@ -446,11 +452,110 @@ function sendToPython(message) {
   }
 }
 
+function loadSavedSettings() {
+  const fs = require('fs');
+
+  try {
+    if (fs.existsSync(SETTINGS_PATH)) {
+      const settingsJson = fs.readFileSync(SETTINGS_PATH, 'utf8');
+      const settings = JSON.parse(settingsJson);
+
+      if (settings && settings.providers) {
+        const { chat, code, planner } = settings.providers;
+
+        // Only set env vars if not already set (env vars take precedence)
+        if (chat && chat.provider && chat.model && !process.env.NERION_V2_CHAT_PROVIDER) {
+          process.env.NERION_V2_CHAT_PROVIDER = `${chat.provider}:${chat.model}`;
+          console.log('[HOLO] Loaded chat provider from settings:', process.env.NERION_V2_CHAT_PROVIDER);
+        }
+
+        if (code && code.provider && code.model && !process.env.NERION_V2_CODE_PROVIDER) {
+          process.env.NERION_V2_CODE_PROVIDER = `${code.provider}:${code.model}`;
+          console.log('[HOLO] Loaded code provider from settings:', process.env.NERION_V2_CODE_PROVIDER);
+        }
+
+        if (planner && planner.provider && planner.model && !process.env.NERION_V2_PLANNER_PROVIDER) {
+          process.env.NERION_V2_PLANNER_PROVIDER = `${planner.provider}:${planner.model}`;
+          console.log('[HOLO] Loaded planner provider from settings:', process.env.NERION_V2_PLANNER_PROVIDER);
+        }
+      }
+
+      return settings;
+    }
+  } catch (error) {
+    console.error('[HOLO] Failed to load saved settings:', error);
+  }
+
+  return null;
+}
+
+function handleSaveSettings(settings) {
+  const fs = require('fs');
+
+  if (!settings || !settings.providers) {
+    console.error('[HOLO] Invalid settings payload');
+    return;
+  }
+
+  // Save settings to ~/.nerion/ui-settings.json
+  // Python backend reads this file on EVERY request for real-time provider switching
+  const nerionDir = path.join(os.homedir(), '.nerion');
+  const settingsPath = path.join(nerionDir, 'ui-settings.json');
+
+  try {
+    // Ensure .nerion directory exists
+    if (!fs.existsSync(nerionDir)) {
+      fs.mkdirSync(nerionDir, { recursive: true });
+    }
+
+    // Write settings to file
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    console.log('[HOLO] Settings saved to', settingsPath);
+
+    const { chat, code, planner } = settings.providers;
+    console.log('[HOLO] Provider configuration:');
+    if (chat && chat.provider && chat.model) {
+      console.log(`[HOLO]   Chat: ${chat.provider}:${chat.model}`);
+    }
+    if (code && code.provider && code.model) {
+      console.log(`[HOLO]   Code: ${code.provider}:${code.model}`);
+    }
+    if (planner && planner.provider && planner.model) {
+      console.log(`[HOLO]   Planner: ${planner.provider}:${planner.model}`);
+    }
+    console.log('[HOLO] Next request will use new provider settings (no restart needed)');
+
+    // Send success notification back to renderer
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('nerion-event', {
+        type: 'settings_saved',
+        success: true
+      });
+    }
+  } catch (error) {
+    console.error('[HOLO] Failed to save settings:', error);
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('nerion-event', {
+        type: 'settings_saved',
+        success: false,
+        error: error.message
+      });
+    }
+  }
+}
+
 function registerIpcHandlers() {
   ipcMain.on('nerion-command', (_event, payload) => {
     if (!payload || typeof payload !== 'object') {
       return;
     }
+
+    // Handle save-settings specially
+    if (payload.type === 'save-settings') {
+      handleSaveSettings(payload.payload);
+      return;
+    }
+
     sendToPython(payload);
   });
 
@@ -571,6 +676,9 @@ function cleanupTerminalServer() {
 }
 
 app.on('ready', () => {
+  // Load saved settings before creating window
+  loadSavedSettings();
+
   createWindow();
   ensureTray();
   registerIpcHandlers();

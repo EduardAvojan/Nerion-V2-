@@ -118,13 +118,20 @@
 }
 
 .settings-section h3 {
-  margin: 0 0 16px 0;
+  margin: 0 0 8px 0;
   font-size: 16px;
   font-weight: 600;
   color: var(--accent);
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.section-description {
+  margin: 0 0 16px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-style: italic;
 }
 
 .setting-item {

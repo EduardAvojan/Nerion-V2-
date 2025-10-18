@@ -61,6 +61,14 @@ class _NoArgs(BaseModel):
 class _ReadFileArgs(BaseModel):
     path: str
 
+class _ListRecentFilesArgs(BaseModel):
+    limit: Optional[int] = 10
+    directory: Optional[str] = None
+
+class _FindFilesArgs(BaseModel):
+    pattern: Optional[str] = "*"
+    directory: Optional[str] = None
+
 
 class ParentExecutor:
     """Execute ParentDecision plans via injected tool runners.
@@ -102,6 +110,8 @@ class ParentExecutor:
             "run_pytest_smoke": _NoArgs,
             "read_file": _ReadFileArgs,
             "summarize_file": _ReadFileArgs,
+            "list_recent_files": _ListRecentFilesArgs,
+            "find_files": _FindFilesArgs,
         }
 
     def execute(self, decision: ParentDecision, user_query: str) -> Dict[str, Any]:
@@ -413,6 +423,8 @@ def make_default_executor(
     run_pytest_smoke: Optional[ToolRunner] = None,
     read_file: Optional[ToolRunner] = None,
     summarize_file: Optional[ToolRunner] = None,
+    list_recent_files: Optional[ToolRunner] = None,
+    find_files: Optional[ToolRunner] = None,
     ensure_network: Optional[EnsureNetwork] = None,
     allowed_tools: Optional[Iterable[str]] = None,
     metrics_hook: Optional[MetricsHook] = None,
@@ -444,6 +456,10 @@ def make_default_executor(
         runners["read_file"] = read_file
     if summarize_file is not None:
         runners["summarize_file"] = summarize_file
+    if list_recent_files is not None:
+        runners["list_recent_files"] = list_recent_files
+    if find_files is not None:
+        runners["find_files"] = find_files
     return ParentExecutor(
         tool_runners=runners,
         ensure_network=ensure_network,

@@ -125,6 +125,9 @@ class _ProviderBackedChain:
         self._nerion_model_name = self._describe_model()
         self.last_response = None
 
+        # Debug: Print which provider/model we're using
+        print(f"[LLM] Initialized chain for role='{role}' with model: {self._nerion_model_name}")
+
     def _describe_model(self) -> str:
         from app.chat.providers import ProviderNotConfigured  # local import
         try:

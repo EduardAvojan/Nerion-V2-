@@ -42,66 +42,10 @@ function App() {
     autoFixes24h: 23
   })
 
-  const [memory, setMemory] = useState({
-    count: 234,
-    pinned: [],
-    recent: []
-  })
-
-  // Connect to events WebSocket
-  useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8000/api/events')
-
-    ws.onopen = () => {
-      console.log('[Events] Connected')
-    }
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-      console.log('[Events]', data)
-
-      switch (data.type) {
-        case 'health_update':
-          setImmune(prev => ({ ...prev, ...data.data }))
-          break
-        case 'signal_update':
-          setSignals(prev => ({ ...prev, ...data.data }))
-          break
-        case 'memory_update':
-          setMemory(prev => ({ ...prev, ...data.data }))
-          break
-        // Add more event handlers as needed
-      }
-    }
-
-    ws.onerror = (error) => {
-      console.error('[Events] Error:', error)
-    }
-
-    ws.onclose = () => {
-      console.log('[Events] Disconnected')
-    }
-
-    return () => ws.close()
-  }, [])
-
   // Apply theme to document
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
-
-  // Fetch initial data
-  useEffect(() => {
-    fetch('/api/health')
-      .then(res => res.json())
-      .then(data => setSystemStatus(data))
-      .catch(err => console.error('Failed to fetch health:', err))
-
-    fetch('/api/memory')
-      .then(res => res.json())
-      .then(data => setMemory(data))
-      .catch(err => console.error('Failed to fetch memory:', err))
-  }, [])
 
   return (
     <div className="app">
@@ -124,7 +68,7 @@ function App() {
         <div className="status-panels">
           <ImmuneVitalsPanel {...immune} />
           <SignalHealthPanel {...signals} />
-          <MemorySnapshotPanel {...memory} />
+          <MemorySnapshotPanel />
         </div>
 
         {/* Center - Main Interface */}

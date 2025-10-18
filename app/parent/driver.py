@@ -73,6 +73,54 @@ class ParentDriver:
             pass
         return False
 
+    def _enforce_tool_usage(self, decision: ParentDecision, user_query: str) -> ParentDecision:
+        """Architectural validation: prevent LLM from choosing 'respond' when tools are available."""
+        # Skip enforcement if decision already uses tools or asks user
+        has_tool_call = any(step.action == "tool_call" for step in (decision.plan or []))
+        has_ask_user = any(step.action == "ask_user" for step in (decision.plan or []))
+
+        if has_tool_call or has_ask_user:
+            return decision
+
+        # Analyze query to determine what tools should be used
+        q = (user_query or "").lower()
+        tool_name = None
+        args = {}
+
+        # File operations
+        if any(word in q for word in ["file", "files"]):
+            if any(word in q for word in ["recent", "modified", "changed", "updated", "latest"]):
+                tool_name = "list_recent_files"
+                args = {"limit": 10}
+            elif any(word in q for word in ["find", "search", "locate", "where"]):
+                tool_name = "find_files"
+                args = {"pattern": "*"}
+
+        # Web operations
+        elif any(word in q for word in ["search", "google", "look up", "find online"]):
+            tool_name = "web_search"
+            args = {"query": user_query, "max_results": 5}
+
+        # If we identified an applicable tool, enforce its usage
+        if tool_name and any(t.name == tool_name for t in (self.tools.tools or [])):
+            from .schemas import Step
+            new_step = Step(
+                action="tool_call",
+                tool=tool_name,
+                args=args,
+                summary=f"Using {tool_name}",
+            )
+            return ParentDecision(
+                intent=decision.intent or "tool_usage",
+                plan=[new_step],
+                final_response=None,
+                confidence=decision.confidence,
+                requires_network=(tool_name in ["web_search", "read_url"]),
+                notes=f"Enforced: {tool_name}",
+            )
+
+        return decision
+
     def _get_coder_parent_llm(self) -> Optional[ParentLLM]:
         if self.coder_llm is not None:
             return self.coder_llm
@@ -464,7 +512,13 @@ class ParentDriver:
         # Robust parse → ParentDecision; fallback to a clarify plan on error
         try:
             data = json.loads(raw)
-            return ParentDecision(**data)
+            decision = ParentDecision(**data)
+
+            # ARCHITECTURAL FIX: Validate that LLM didn't cop out when tools are available
+            # This prevents the LLM from choosing "respond" to bypass using available tools
+            decision = self._enforce_tool_usage(decision, user_query)
+
+            return decision
         except Exception as e:
             # Minimal safe fallback that asks the user for clarification
             return ParentDecision(

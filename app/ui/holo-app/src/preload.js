@@ -18,11 +18,21 @@ function subscribe(channel, handler) {
 
 contextBridge.exposeInMainWorld('nerion', {
   ready() {
+    console.log('[PRELOAD] Sending nerion-ready');
     ipcRenderer.send('nerion-ready');
   },
   send: safeSend,
   onEvent(handler) {
-    return subscribe('nerion-event', handler);
+    console.log('[PRELOAD] Registering event handler');
+    const wrapped = (_event, data) => {
+      console.log('[PRELOAD] Received event:', data && data.type ? data.type : 'unknown', data);
+      handler(data);
+    };
+    ipcRenderer.on('nerion-event', wrapped);
+    return () => {
+      console.log('[PRELOAD] Unregistering event handler');
+      ipcRenderer.removeListener('nerion-event', wrapped);
+    };
   },
   onStatus(handler) {
     return subscribe('nerion-status', handler);
