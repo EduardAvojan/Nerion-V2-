@@ -139,6 +139,7 @@ def integrate_scraper_with_api(
                     commit_data.before_code = before_code
                     commit_data.after_code = after_code
                     commit_data.language = language
+                    commit_data.current_file = file_path  # Track which file we're processing
 
                     # Stage 3: Size filter
                     if not scraper.passes_size_filter(before_code, after_code):
@@ -170,19 +171,22 @@ def integrate_scraper_with_api(
                     # Stage 8: Synthesize test code
                     test_code = scraper.synthesize_test_code(commit_data)
 
-                    # Stage 9: Save to database
-                    scraper.save_lesson(commit_data, test_code)
-                    total_accepted += 1
-                    commit_accepted = True
+                    # Stage 9: Save to database (only count if successful)
+                    save_success = scraper.save_lesson(commit_data, test_code)
 
-                    print(f"  ✅ Accepted: {commit_data.sha[:8]} [{commit_data.language}] ({commit_data.category}) - Score: {commit_data.quality_score}")
+                    if save_success:
+                        total_accepted += 1
+                        commit_accepted = True
+                        print(f"  ✅ Accepted: {commit_data.sha[:8]} [{commit_data.language}] ({commit_data.category}) - Score: {commit_data.quality_score}")
 
-                    # Show progress every 10 accepted
-                    if total_accepted % 10 == 0:
-                        scraper.stats.print_progress()
+                        # Show progress every 10 accepted
+                        if total_accepted % 10 == 0:
+                            scraper.stats.print_progress()
+                    # else: silently skip (duplicate or error - already tracked in stats)
 
-                    # Only process one file per commit to avoid duplicates
-                    break
+                    # OPTIMIZATION: Process multiple files per commit for better yield
+                    # Each file gets unique lesson name (sha + filename)
+                    # Removed artificial 1-file limit
 
                 # Increment counters ONCE per commit based on outcome
                 if commit_accepted:

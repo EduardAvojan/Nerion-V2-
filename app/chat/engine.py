@@ -929,6 +929,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
                 _start_response(detail, status='active')
                 print('Nerion:', text)
                 safe_speak(text, watcher)
+
+                # Forward assistant turn to UI for Genesis chat
+                try:
+                    if _ipc.enabled():
+                        _ipc.emit('chat_turn', {'role': 'assistant', 'text': text})
+                except Exception:
+                    pass
+
                 try:
                     STATE.append_turn('assistant', text)
                 except Exception:
@@ -1421,6 +1429,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
                             if txt:
                                 print('Nerion:', txt)
                                 safe_speak(txt, watcher)
+
+                                # Forward assistant turn to UI for Genesis chat
+                                try:
+                                    if _ipc.enabled():
+                                        _ipc.emit('chat_turn', {'role': 'assistant', 'text': txt})
+                                except Exception:
+                                    pass
+
                                 try:
                                     STATE.append_turn('assistant', txt)
                                 except Exception:
@@ -1628,6 +1644,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
                                     if txt:
                                         print('Nerion:', txt)
                                         safe_speak(txt, watcher)
+
+                                        # Forward assistant turn to UI for Genesis chat
+                                        try:
+                                            if _ipc.enabled():
+                                                _ipc.emit('chat_turn', {'role': 'assistant', 'text': txt})
+                                        except Exception:
+                                            pass
+
                                         try:
                                             STATE.append_turn('assistant', txt)
                                         except Exception:
@@ -1778,6 +1802,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
                         pass
                     print('Nerion:', note)
                     safe_speak(note, watcher)
+
+                    # Forward assistant turn to UI for Genesis chat
+                    try:
+                        if _ipc.enabled():
+                            _ipc.emit('chat_turn', {'role': 'assistant', 'text': note})
+                    except Exception:
+                        pass
+
                     try:
                         STATE.append_turn('assistant', note)
                     except Exception:
@@ -1826,6 +1858,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
             response = _strip_think_blocks(response).strip()
             print('Nerion:', response)
             safe_speak(response, watcher)
+
+            # Forward assistant turn to UI for Genesis chat
+            try:
+                if _ipc.enabled():
+                    _ipc.emit('chat_turn', {'role': 'assistant', 'text': response})
+            except Exception:
+                pass
+
             try:
                 STATE.append_turn('assistant', response)
             except Exception:

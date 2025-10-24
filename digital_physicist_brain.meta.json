@@ -1,16 +1,16 @@
 {
-  "architecture": "gat",
-  "attention_heads": 8,
-  "best_epoch": 3,
+  "architecture": "gin",
+  "attention_heads": 4,
+  "best_epoch": 22,
   "best_val_accuracy": 0.4740740740740741,
-  "best_val_auc": 0.6063712522045855,
-  "best_val_f1": 0.2111111111111111,
+  "best_val_auc": 0.597608024691358,
+  "best_val_f1": 0.16470588235294117,
   "dropout": 0.2,
   "hidden_channels": 256,
   "num_layers": 4,
   "num_node_features": 48,
   "pooling": "mean",
-  "residual": true,
-  "run_dir": "out/training_runs/final_complete_gat/20251018T024642Z",
-  "trained_at": "2025-10-18T02:46:42.790009+00:00"
+  "residual": false,
+  "run_dir": "out/training_runs/oct17_comparison/20251018T181219Z",
+  "trained_at": "2025-10-18T18:12:19.561253+00:00"
 }

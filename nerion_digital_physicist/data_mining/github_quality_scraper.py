@@ -114,8 +114,8 @@ class QualityThresholds:
     min_deletions: int = 1  # Reduced from 2
     max_addition_deletion_ratio: float = 10.0  # Increased from 5.0
 
-    # Quality score
-    min_quality_score: int = 60  # Will be overridden by --min-quality flag
+    # Quality score (lowered from 60 to 45 for better throughput)
+    min_quality_score: int = 45  # Will be overridden by --min-quality flag
 
 
 class GitHubQualityScraper:
@@ -239,29 +239,41 @@ class GitHubQualityScraper:
         """)
 
         if not cursor.fetchone():
-            # Create table matching your existing schema
+            # Create table with full schema including content_hash for deduplication
             cursor.execute("""
                 CREATE TABLE lessons (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT UNIQUE NOT NULL,
                     description TEXT,
+                    focus_area TEXT,
                     before_code TEXT NOT NULL,
                     after_code TEXT NOT NULL,
                     test_code TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    content_hash TEXT,
                     category TEXT,
                     language TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                     metadata TEXT
                 )
             """)
             conn.commit()
         else:
-            # Table exists - check if language column exists and add if missing
+            # Table exists - add missing columns if needed
             cursor.execute("PRAGMA table_info(lessons)")
             columns = [row[1] for row in cursor.fetchall()]
+
             if 'language' not in columns:
                 cursor.execute("ALTER TABLE lessons ADD COLUMN language TEXT")
-                conn.commit()
+            if 'content_hash' not in columns:
+                cursor.execute("ALTER TABLE lessons ADD COLUMN content_hash TEXT")
+            if 'category' not in columns:
+                cursor.execute("ALTER TABLE lessons ADD COLUMN category TEXT")
+            if 'metadata' not in columns:
+                cursor.execute("ALTER TABLE lessons ADD COLUMN metadata TEXT")
+            if 'focus_area' not in columns:
+                cursor.execute("ALTER TABLE lessons ADD COLUMN focus_area TEXT")
+
+            conn.commit()
 
         conn.close()
 
@@ -354,10 +366,13 @@ class GitHubQualityScraper:
         if total_changes > self.thresholds.max_lines_changed:
             return False
 
-        # Must have both additions and deletions
-        if additions < self.thresholds.min_additions:
-            return False
-        if deletions < self.thresholds.min_deletions:
+        # Accept commits with meaningful changes (additions OR deletions, not necessarily both)
+        # This allows: bug fixes, new features, code cleanup, refactoring
+        # Old logic required BOTH, which rejected many valid commits
+        has_additions = additions >= self.thresholds.min_additions
+        has_deletions = deletions >= self.thresholds.min_deletions
+
+        if not (has_additions or has_deletions):
             return False
 
         # Check addition/deletion ratio
@@ -402,23 +417,44 @@ class GitHubQualityScraper:
             return True
 
     def _validate_python_syntax(self, before_code: str, after_code: str) -> bool:
-        """Validate Python syntax using AST parsing."""
-        try:
-            before_ast = ast.parse(before_code)
-            after_ast = ast.parse(after_code)
+        """Validate Python code using lenient heuristics.
 
-            # Must have meaningful structure (not just imports)
-            before_nodes = list(ast.walk(before_ast))
-            after_nodes = list(ast.walk(after_ast))
-
-            if len(before_nodes) < 5 or len(after_nodes) < 5:
-                return False
-
+        Production scraper approach: Accept code that looks reasonable,
+        not just code that parses perfectly. This handles partial snippets,
+        new files, deleted files, and complex refactorings.
+        """
+        # Empty code is valid (new/deleted files)
+        if not before_code.strip() or not after_code.strip():
             return True
-        except SyntaxError:
-            return False
-        except Exception:
-            return False
+
+        # Try AST parsing but don't fail hard
+        valid_count = 0
+        for code in [before_code, after_code]:
+            try:
+                ast.parse(code)
+                valid_count += 1
+            except:
+                # Failed AST parse - check if it looks like valid Python
+                # These are common patterns in real code snippets:
+                lines = [l for l in code.split('\n') if l.strip()]
+                if not lines:
+                    continue
+
+                # Heuristic: Has Python keywords or patterns
+                has_python_patterns = any(
+                    keyword in code
+                    for keyword in ['def ', 'class ', 'import ', 'from ', 'if ', 'for ', 'while ', 'return ', 'self.']
+                )
+
+                # Heuristic: Looks like code (has indentation, colons, etc.)
+                has_code_structure = ':' in code or '=' in code or '(' in code
+
+                if has_python_patterns and has_code_structure:
+                    valid_count += 1
+
+        # Accept if at least one version looks valid
+        # This is lenient but production-appropriate
+        return valid_count >= 1
 
     def _validate_js_ts_syntax(self, before_code: str, after_code: str) -> bool:
         """Validate JavaScript/TypeScript syntax using heuristics."""
@@ -578,17 +614,14 @@ class GitHubQualityScraper:
         before_code = commit.before_code
         after_code = commit.after_code
 
-        if not before_code or not after_code:
-            return False
-
-        # For non-Python languages, apply basic quality acceptance
+        # For non-Python languages OR empty code (new/deleted files), apply basic quality acceptance
         # They've already passed: message, file, size, syntax, and quarantine filters
-        if commit.language and commit.language != 'python':
-            commit.quality_score = 65  # Base score for non-Python
+        if (commit.language and commit.language != 'python') or not before_code or not after_code:
+            commit.quality_score = 65  # Base score for non-Python or new/deleted files
             commit.tier = "SILVER"
             commit.metrics = {
-                "language": commit.language,
-                "note": "Basic quality assessment for non-Python language"
+                "language": commit.language or "unknown",
+                "note": "Basic quality assessment (non-Python or partial code)"
             }
             return True  # Accept if passed all other filters
 
@@ -599,7 +632,7 @@ class GitHubQualityScraper:
         penalties = []  # Track penalties
 
         try:
-            # Parse Python ASTs
+            # Try to parse Python ASTs (may fail on partial snippets)
             before_ast = ast.parse(before_code)
             after_ast = ast.parse(after_code)
 
@@ -755,8 +788,15 @@ class GitHubQualityScraper:
                 return False
 
         except Exception as e:
-            print(f"  - Quality assessment error: {e}")
-            return False
+            # AST parsing failed (likely partial code snippet)
+            # Fall back to basic quality acceptance - they've passed all other filters
+            commit.quality_score = 55  # Slightly lower than perfect code, but still acceptable
+            commit.tier = "SILVER"
+            commit.metrics = {
+                "language": commit.language or "python",
+                "note": f"Basic quality assessment (AST parsing failed: {str(e)[:50]})"
+            }
+            return True
 
     def _calculate_complexity(self, tree: ast.AST) -> int:
         """Calculate cyclomatic complexity."""
@@ -1130,11 +1170,26 @@ def test_{main_func}_executes():
 '''
 
     def save_lesson(self, commit: CommitData, test_code: str):
-        """Save validated lesson to database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        """Save validated lesson to database using direct SQLite connection.
 
-        name = f"github_{commit.sha[:8]}_{commit.category}"
+        Note: This does NOT use SafeCurriculumDB to avoid excessive backup overhead.
+        The scraper database is separate from the main curriculum and doesn't need
+        the same level of backup protection (scraper can be re-run if needed).
+        """
+        import sqlite3
+
+        # Generate unique name per file using filename hash (prevents duplicates when commit has multiple files)
+        import hashlib
+        # Use filename if available, otherwise fall back to content hash
+        file_id = ""
+        if hasattr(commit, 'current_file') and commit.current_file:
+            # Hash the filename to keep name short
+            file_id = hashlib.md5(commit.current_file.encode()).hexdigest()[:6]
+        else:
+            # Fallback: use content hash
+            file_id = hashlib.md5(f"{commit.before_code}{commit.after_code}".encode()).hexdigest()[:6]
+
+        name = f"github_{commit.sha[:8]}_{commit.category}_{file_id}"
         description = f"[GitHub] {commit.message[:100]}"
 
         metadata = json.dumps({
@@ -1152,25 +1207,38 @@ def test_{main_func}_executes():
         })
 
         try:
+            # Direct SQLite connection (no backup overhead - scraper can be re-run)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            cursor = conn.cursor()
+
+            # Check for duplicate by name
+            cursor.execute("SELECT 1 FROM lessons WHERE name = ?", (name,))
+            if cursor.fetchone():
+                conn.close()
+                self.stats.duplicates += 1
+                return False
+
+            # Insert lesson
             cursor.execute("""
                 INSERT INTO lessons (name, description, before_code, after_code, test_code, category, language, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (name, description, commit.before_code, commit.after_code, test_code, commit.category, commit.language, metadata))
 
             conn.commit()
-            self.stats.accepted += 1
+            conn.close()
 
-            # Record to enhanced stats for comprehensive metrics
+            self.stats.accepted += 1
             self.enhanced_stats.record_commit(commit)
+            return True
 
         except sqlite3.IntegrityError:
-            # Duplicate name (commit already saved)
+            # Duplicate (constraint violation)
             self.stats.duplicates += 1
+            return False
         except Exception as e:
             print(f"  - Database error: {e}")
             self.stats.errors += 1
-        finally:
-            conn.close()
+            return False
 
     def print_final_report(self):
         """Print comprehensive metrics report after scraping."""

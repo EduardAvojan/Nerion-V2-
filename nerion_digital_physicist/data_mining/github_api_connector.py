@@ -153,7 +153,7 @@ class GitHubAPIConnector:
                             break
 
                     page += 1
-                    time.sleep(1)  # Be nice to GitHub API
+                    # Removed artificial delay - rely on rate limiting only
                     break  # Success, exit retry loop
 
                 except requests.exceptions.Timeout as e:
@@ -339,24 +339,29 @@ class GitHubAPIConnector:
                         before_lines.append(line[1:])
                         after_lines.append(line[1:])
 
-                # Try to fetch full file content for better context
-                before_code = self._fetch_file_content(
-                    repo,
-                    target_file,
-                    f"{commit_json['sha']}^"  # Parent commit
-                )
-                after_code = self._fetch_file_content(
-                    repo,
-                    target_file,
-                    commit_json['sha']
-                )
-
-                if before_code and after_code:
-                    return (before_code, after_code)
-
-                # Fallback to patch reconstruction
+                # Try patch reconstruction first (fast path - no API calls)
                 if before_lines and after_lines:
                     return ('\n'.join(before_lines), '\n'.join(after_lines))
+
+                # FALLBACK: If patch extraction incomplete, fetch full files
+                # This handles: new files, deleted files, binary changes, complex merges
+                # Trade-off: 2 extra API calls per file, but much higher success rate
+                print(f"  - Patch incomplete for {target_file}, fetching full files...")
+
+                try:
+                    before_code = self._fetch_file_content(repo, target_file, f"{commit_json['sha']}^")
+                    after_code = self._fetch_file_content(repo, target_file, commit_json['sha'])
+
+                    if before_code and after_code:
+                        return (before_code, after_code)
+                    elif before_code and not after_code:
+                        # File was deleted - use empty string for after
+                        return (before_code, "")
+                    elif after_code and not before_code:
+                        # File was created - use empty string for before
+                        return ("", after_code)
+                except Exception as e:
+                    print(f"  - Full file fetch failed: {e}")
 
                 return None
 

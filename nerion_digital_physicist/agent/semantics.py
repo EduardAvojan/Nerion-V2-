@@ -17,6 +17,11 @@ from app.chat.providers.base import (
 DEFAULT_DIMENSION = 16
 _CACHE_FILENAME = ".semantic_cache.json"
 
+# CodeBERT support
+_CODEBERT_MODEL = None
+_CODEBERT_TOKENIZER = None
+CODEBERT_DIM = 768
+
 
 class SemanticEmbedder:
     """Generate deterministic semantic embeddings for code snippets.
@@ -63,7 +68,13 @@ class SemanticEmbedder:
         self._registry: Optional[ProviderRegistry] = None
         self._provider_override: Optional[str] = None
         self.dimension = dimension
-        if provider_id and provider_id != "hash":
+
+        # Check for CodeBERT provider
+        if provider_id == "codebert":
+            self.provider = "codebert"
+            self._provider_override = None
+            self.dimension = CODEBERT_DIM
+        elif provider_id and provider_id != "hash":
             self._initialise_registry(provider_id)
         else:
             self.provider = "hash"
@@ -97,7 +108,9 @@ class SemanticEmbedder:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        if self.provider == "hash" or not self._registry or not self._provider_override:
+        if self.provider == "codebert":
+            vector = self._codebert_embedding(text)
+        elif self.provider == "hash" or not self._registry or not self._provider_override:
             vector = self._hash_embedding(text)
         else:
             vector = self._provider_embedding(text)
@@ -154,6 +167,53 @@ class SemanticEmbedder:
             except Exception:
                 pass
         return [float(val) for val in vector]
+
+    def _codebert_embedding(self, text: str) -> List[float]:
+        """Generate CodeBERT embedding for code snippet."""
+        global _CODEBERT_MODEL, _CODEBERT_TOKENIZER
+
+        # Lazy load CodeBERT model
+        if _CODEBERT_MODEL is None or _CODEBERT_TOKENIZER is None:
+            try:
+                from transformers import AutoTokenizer, AutoModel
+                import torch
+
+                print("Loading CodeBERT model (microsoft/codebert-base)...")
+                _CODEBERT_TOKENIZER = AutoTokenizer.from_pretrained("microsoft/codebert-base")
+                _CODEBERT_MODEL = AutoModel.from_pretrained("microsoft/codebert-base")
+                _CODEBERT_MODEL.eval()  # Set to evaluation mode
+                print("CodeBERT model loaded successfully!")
+            except Exception as e:
+                print(f"Failed to load CodeBERT: {e}. Falling back to hash embedding.")
+                return self._hash_embedding(text)
+
+        try:
+            import torch
+
+            # Truncate text if too long (max 512 tokens for CodeBERT)
+            text = text[:2000]  # Rough character limit
+
+            # Tokenize and encode
+            inputs = _CODEBERT_TOKENIZER(
+                text,
+                return_tensors="pt",
+                max_length=512,
+                truncation=True,
+                padding="max_length"
+            )
+
+            # Generate embedding (mean pool over tokens)
+            with torch.no_grad():
+                outputs = _CODEBERT_MODEL(**inputs)
+                # Use [CLS] token embedding (first token)
+                embedding = outputs.last_hidden_state[:, 0, :].squeeze()
+                vector = embedding.tolist()
+
+            return [float(v) for v in vector]
+
+        except Exception as e:
+            print(f"CodeBERT embedding failed: {e}. Falling back to hash.")
+            return self._hash_embedding(text)
 
     def _persist_cache(self) -> None:
         MAX_CACHE_ENTRIES = 10000

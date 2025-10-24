@@ -59,8 +59,14 @@ def build_before_after_graphs(lessons: Iterable[sqlite3.Row]) -> List[Data]:
     embedder = get_global_embedder()
     graphs: List[Data] = []
 
-    for lesson in lessons:
+    lessons_list = list(lessons)
+    total = len(lessons_list)
+    print(f"Building before/after graphs from {total} lessons...")
+
+    for idx, lesson in enumerate(lessons_list, 1):
         name = str(lesson["name"])
+        if idx % 50 == 0:
+            print(f"Progress: {idx}/{total} lessons processed ({len(graphs)} graphs created)")
         try:
             before = create_graph_data_from_source(
                 str(lesson["before_code"]), embedder=embedder
@@ -83,6 +89,7 @@ def build_before_after_graphs(lessons: Iterable[sqlite3.Row]) -> List[Data]:
             print(f" - Skipping lesson '{name}' due to graph extraction error: {exc}")
             continue
 
+    print(f"Completed: {total} lessons processed, {len(graphs)} graphs created")
     if not graphs:
         raise RuntimeError("No graphs could be produced from the provided lessons")
 
