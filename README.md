@@ -1,3 +1,4 @@
+<a name="top"></a>
 # Nerion - A Biological Immune System for Software
 
 <div align="center">
@@ -9,7 +10,7 @@
 
 **Autonomous Code Quality | PhD-Level Intelligence | 24/7 Protection**
 
-[Quick Start](#-quick-start) • [Documentation](#-documentation) • [Features](#-key-features) • [Architecture](#-architecture) • [Contributing](#-contributing)
+[Quick Start](#quick-start) • [Documentation](#documentation) • [Features](#key-features) • [Architecture](#architecture) • [Contributing](#contributing)
 
 </div>
 
@@ -356,6 +357,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ⭐ **Star this repo** if you find it useful!
 
-[⬆ Back to Top](#nerion---a-biological-immune-system-for-software)
+[⬆ Back to Top](#top)
 
 </div>
