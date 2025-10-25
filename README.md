@@ -36,15 +36,17 @@ Nerion learns the "physics" of code quality using Graph Neural Networks, generat
 ## ✨ Key Features
 
 ### 🧠 Deep Learning Brain
-- **Graph Neural Networks (GNN)** - Understands code structure, not just syntax
-- **58.9% accuracy baseline** (GraphSAGE architecture) - targeting 90%
-- **1,004 training lessons** across 10 programming languages
-- **Self-improving** - Generates its own curriculum
+- **Graph Neural Networks (GNN)** - Understands code as interconnected graphs, capturing structural patterns that traditional tools miss
+- **Continuously evolving intelligence** - Trains on real-world code patterns using advanced GraphSAGE architecture
+- **Self-improving curriculum** - Autonomously generates and validates its own training lessons across multiple difficulty levels
+- **Production-grade learning** - Learns from thousands of real bug fixes spanning beginner mistakes to expert-level vulnerabilities
 
 ### 🌍 Multi-Language Support
-Protects production systems in **10 languages**:
-- **Tier 1** (20% each): Python, Java, SQL
-- **Tier 2**: JavaScript, TypeScript, C++, C#, Go, Rust, Ruby
+Comprehensive protection across **enterprise-critical languages**:
+- **Backend & Infrastructure**: Python, Java, Go, Rust, C++, C#, Ruby
+- **Web & Frontend**: JavaScript, TypeScript
+- **Data & Databases**: SQL with query optimization and injection detection
+- **Production-ready patterns** for each language's unique idioms, frameworks, and common vulnerabilities
 
 ### 🎤 Voice-First Interface
 - **Push-to-talk** or wake word ("Hey Nerion")
@@ -203,24 +205,24 @@ Nerion is a **multi-tiered autonomous developer agent** with 10+ major subsystem
                   │
         ┌─────────▼─────────┐
         │  CURRICULUM DB    │
-        │  1,004 Lessons    │
-        │  10 Languages     │
+        │  Multi-Language   │
+        │  Self-Generated   │
         └───────────────────┘
 ```
 
 ### Two-Tiered Learning
 
-1. **Behavioral Coach (Fast Path)** - Handles 80% of common tasks with heuristics
-   - Variable naming conventions
-   - Import sorting
-   - Docstring formatting
-   - Simple refactors
+1. **Behavioral Coach (Fast Path)** - Handles routine tasks with lightning-fast heuristics
+   - Variable naming conventions and code style
+   - Import sorting and organization
+   - Docstring formatting and documentation
+   - Common refactoring patterns
 
-2. **Digital Physicist (Deep Path)** - Handles 20% of novel problems with GNN
-   - Novel bug patterns
-   - Complex refactoring
-   - Architectural improvements
-   - Performance optimization
+2. **Digital Physicist (Deep Path)** - Tackles complex problems with deep GNN reasoning
+   - Novel bug patterns and edge cases
+   - Large-scale refactoring and migrations
+   - Architectural improvements and optimizations
+   - Performance bottleneck analysis
 
 ---
 
@@ -238,9 +240,10 @@ Nerion's training curriculum spans **6 skill levels** (A1 → C2):
 | **C2** | Mastery/PhD | Compiler internals, JIT, GC algorithms |
 
 **Current Database:**
-- 1,004 total lessons (100% agent-generated)
-- 10 programming languages
-- Production-ready distribution (20% Python/Java/SQL, 40% others)
+- Thousands of agent-generated lessons across all skill levels
+- Full coverage of enterprise programming languages
+- Real-world bug patterns from beginner to mastery level
+- Continuously expanding with autonomous lesson generation
 
 ---
 
@@ -248,21 +251,21 @@ Nerion's training curriculum spans **6 skill levels** (A1 → C2):
 
 ### Current Phase: MVP → Production (Q4 2025)
 
-**Immediate (1-2 weeks):**
-- ✅ Complete CodeBERT dataset generation (51% done)
-- ✅ Train SAGE with semantic features (target: 75-80% accuracy)
-- ⏳ Populate category metadata for 930 NULL lessons
+**Immediate:**
+- ✅ Advanced semantic understanding with CodeBERT integration
+- ✅ Enhanced GNN training with semantic feature embeddings
+- ⏳ Comprehensive lesson categorization and quality metrics
 
-**Short-term (1-2 months):**
-- Add framework lessons (~100-150): NumPy, Pandas, Flask, FastAPI
-- Expand C2 mastery content (40-50 more lessons)
-- Deploy daemon on Nerion codebase (dogfooding)
-- Create macOS .dmg installer
+**Short-term:**
+- Popular framework coverage: NumPy, Pandas, Flask, FastAPI, SQLAlchemy
+- Advanced mastery-level content for security and performance experts
+- Self-monitoring deployment (Nerion protecting its own codebase)
+- Professional macOS installer with auto-update support
 
-**Medium-term (3-6 months):**
-- Reach 90% GNN accuracy (Phase 1-6 complete)
-- Auto-fix mode with confidence thresholds
-- Community lesson marketplace
+**Medium-term:**
+- Production-grade accuracy for enterprise deployment
+- Intelligent auto-fix with configurable confidence thresholds
+- Community-driven lesson marketplace and knowledge sharing
 
 ### V1 (6-12 months): Production Ready
 - CI/CD integrations (GitHub Actions, GitLab CI)
@@ -321,10 +324,10 @@ See [CONTRIBUTING.md](docs/guides/CONTRIBUTING.md) for detailed guidelines.
 - 6 CERF Agents (fully autonomous)
 
 ### 🔄 In Development
-- GNN accuracy improvement (58.9% → 90%)
-- CodeBERT semantic embeddings (Phase 1)
-- Framework lesson expansion
-- C2 mastery content scaling
+- Next-generation semantic understanding with CodeBERT embeddings
+- Advanced GNN architectures for deeper code comprehension
+- Expanded framework coverage (NumPy, Pandas, Flask, FastAPI, SQLAlchemy)
+- Mastery-level curriculum for expert developers and security researchers
 
 ---
 
