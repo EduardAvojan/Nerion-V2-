@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -224,7 +225,9 @@ def get_node_features(node_name: str, graph: nx.DiGraph) -> List[float]:
         )
     elif node_type in ["call_expr", "comparison", "bool_op", "bin_op", "unary_op", "attribute", "comprehension", "lambda"]:
         # Expression-specific features
-        operator_hash = hash(metadata.get("operator_type", "")) % 1000  # Hash operator name to numeric
+        # Use deterministic hash (multiprocessing-safe)
+        operator_str = metadata.get("operator_type", "")
+        operator_hash = int(hashlib.sha256(operator_str.encode('utf-8')).hexdigest()[:8], 16) % 1000
         features.extend(
             [
                 0.0,  # no line_count (expressions are single line)

@@ -144,17 +144,10 @@ class SemanticEmbedder:
         assert self._registry is not None
         assert self._provider_override is not None
         try:
-            # Explicitly load the API key to avoid auth conflicts
-            api_key = os.getenv("NERION_V2_GEMINI_KEY")
-            if not api_key:
-                # Fall back to hash if the key is not in the environment
-                return self._hash_embedding(text)
-
             vectors = self._registry.embed(
                 [text],
                 provider_override=self._provider_override,
                 timeout=self.timeout,
-                api_key=api_key,
             )
         except ProviderError:
             return self._hash_embedding(text)

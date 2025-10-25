@@ -1,6 +1,6 @@
 # Nerion Project - Complete System Documentation
 
-**Last Updated:** October 20, 2025 10:45 PDT
+**Last Updated:** October 25, 2025 (Database: 1004 agent-generated lessons across 10 languages)
 
 ---
 
@@ -143,7 +143,7 @@ USER INTERFACES
 **What it does:**
 - Converts code → AST → Graph representation
 - Classifies as "before/bad" (0) or "after/good" (1)
-- Learns from 488 curriculum lessons (expanding to 733+)
+- Learns from 973 curriculum lessons (483 GitHub-scraped + 490 generated)
 - Uses Graph Neural Networks (not sequential transformers)
 
 **Architectures tested:**
@@ -332,8 +332,8 @@ Nerion: [TTS] "Done. Added try-except with logging on IOError"
 - "Extract API docs from this URL"
 
 ### 9. Curriculum Generation
-**Location:** `nerion_digital_physicist/generation/`, `selfcoder/learning/`
-**Purpose:** Autonomous creation of training lessons
+**Location:** `.claude/agents/` (6 CERF agents: A1, A2, B1, B2, C1, C2)
+**Purpose:** Autonomous creation of training lessons across 10 programming languages
 
 **CEFR Framework (A1 → C2):**
 - **A1/A2** (Beginner) - Variables, loops, basic data structures
@@ -342,33 +342,42 @@ Nerion: [TTS] "Done. Added try-except with logging on IOError"
 - **C2** (Expert/PhD) - Metaclasses, threading, algorithms, security
 
 **Current status:**
-- 488 unique lessons across 22 categories
-- Target: 733 lessons across 80 categories
-- **Critical gap:** A1-A2 (only 1% coverage, need basics)
+- **1004 total lessons** (as of Oct 25, 2025)
+- **100% agent-generated** - GitHub scraper removed, all lessons created by 6 CERF agents
+- **Multi-language support:** 10 languages (Python, Java, SQL, JavaScript, TypeScript, C++, C#, Go, Rust, Ruby)
+- **Language distribution (production-ready):**
+  - **Tier 1 (20% each):** Python, Java, SQL (critical infrastructure)
+  - **Tier 2:** JS/TS 15%, C++ 8%, C# 5%, Go 4%, PHP 3%, Rust 3%, Ruby 2%
+- **CERF Distribution:**
+  - A1 (Beginner): ~12%
+  - A2 (Elementary): ~20%
+  - B1 (Intermediate): ~41%
+  - B2 (Upper-Int): ~19%
+  - C1 (Professional): ~7%
+  - C2 (Mastery): ~1% (growing)
 
-**Generation process:**
-1. LLM generates before/after code pairs
-2. Critic evaluates quality
-3. Self-vetting (both snippets must execute)
-4. Repair mechanism for failures
-5. Store in `curriculum.sqlite`
+**Agent Generation Process (YOLO Mode Enabled):**
+1. Agent queries database for duplicates
+2. LLM generates before/after code pairs for specific CERF level
+3. Self-vetting (both snippets must execute, tests must pass)
+4. Language field explicitly set (e.g., `language="python"`)
+5. Store in `agent_generated_curriculum.sqlite` for review
+6. Quality review (11 validation checks: 5 technical + 6 subjective)
+7. Approved lessons merged to production `curriculum.sqlite`
 
-**22 current categories:**
-- Exception handling, async patterns, security, performance
-- Type hints, comprehensions, generators, context managers
-- Logging, testing, optimization, etc.
-
-**Missing (58 categories):**
-- NumPy, Pandas, Flask, Django
-- Basics (variables, loops, conditionals)
-- Advanced frameworks (FastAPI, SQLAlchemy)
+**6 CERF Agents (Fully Autonomous):**
+- All agents have `auto_approve_tools: true` (YOLO mode)
+- Global permissions: `Write(*)`, `Edit(*)`, `Bash(rm:*)` enabled
+- Each agent generates lessons appropriate to its CERF level
+- Agents automatically clean up temporary files after generation
+- Production database protected (agents write to separate workspace DB)
 
 ### 10. Memory Systems
 **Location:** `app/chat/memory_bridge.py`, `out/memory/`
 **Purpose:** Long-term knowledge retention
 
 **Types:**
-1. **Curriculum database** - 488 code lessons (permanent)
+1. **Curriculum database** - 1004 code lessons (100% agent-generated across 10 languages)
 2. **Experience logs** - All interactions, successes, failures
 3. **Session cache** - Current conversation context
 4. **Knowledge index** - Learned patterns and solutions
@@ -467,25 +476,27 @@ Nerion pre-commit hook: "requests.get() missing timeout parameter (policy violat
 - **Healthcheck & diagnostics** - System monitoring
 - **Memory system** - Long-term and session memory
 - **GNN training pipeline** - Full training/validation workflow
-- **Curriculum database** - 488 unique code lessons
+- **Curriculum database** - 1004 lessons (100% agent-generated)
 - **Mission Control GUI** - Professional Electron app
 - **Daemon process** - Background immune system
 - **Git hooks integration** - Pre-commit/post-commit (ready)
 - **Multiple GNN architectures** - GCN, GraphSAGE, GIN, GAT
+- **Multi-language support** - 10 languages (Python, Java, SQL, JS, TS, C++, C#, Go, Rust, Ruby)
+- **6 CERF Agents** - Fully autonomous (YOLO mode) lesson generation across all levels
 
 ### 🔄 Partially Working
 
 - **GNN accuracy** - 58.9% (target: 90%)
 - **Auto-fix mode** - Training, not production yet
-- **Curriculum expansion** - 488/733 lessons (gap filling in progress)
-- **CodeBERT embeddings** - Integration complete, dataset generation ongoing (46%)
+- **CodeBERT embeddings** - Integration complete, dataset generation ongoing (51%)
 
 ### 🚧 In Development
 
-- **Curriculum gap filling** - Need 245 more lessons (A1-A2 basics, frameworks)
-- **Phase 1 semantic features** - CodeBERT dataset 46% complete
+- **Phase 1 semantic features** - CodeBERT dataset 51% complete
+- **Category population** - Tag NULL category lessons for filtering
 - **Meta-learning** - Prompt improvement via LLM feedback
-- **Multi-language support** - Currently Python-only, JS/Go planned
+- **Framework lessons** - Agents can generate, need to scale up production (NumPy, Pandas, Flask, FastAPI, etc.)
+- **C2 expansion** - Scale up mastery-level lesson generation
 
 ---
 
@@ -552,7 +563,7 @@ Nerion pre-commit hook: "requests.get() missing timeout parameter (policy violat
 │
 ├── out/                           # Runtime data
 │   ├── learning/
-│   │   └── curriculum.sqlite      # 488 code lessons
+│   │   └── curriculum.sqlite      # 973 code lessons (483 GitHub + 490 generated)
 │   ├── training_runs/             # GNN training history
 │   │   └── oct17_comparison/      # Recent 4-arch comparison
 │   └── memory/                    # Long-term memory storage
@@ -578,24 +589,26 @@ Nerion pre-commit hook: "requests.get() missing timeout parameter (policy violat
 **Focus:** GNN accuracy 90%, curriculum completion, immune system deployment
 
 **Immediate Priorities (1-2 weeks):**
-1. ✅ Complete CodeBERT dataset generation (46% done, ETA 1-2 days)
+1. ✅ Complete CodeBERT dataset generation (51% done, ETA 1-2 days)
 2. ✅ Train SAGE with semantic features (target: 75-80% accuracy)
 3. ✅ Measure Phase 1 improvement vs 58.9% baseline
+4. ⚠️ Populate category metadata for 930 NULL lessons
 
 **Short-term (1-2 months):**
-1. Fill curriculum gaps (A1-A2 basics, NumPy, Pandas, Flask, Django)
-2. Deploy daemon on Nerion codebase (dogfooding - monitor itself)
-3. Create macOS .dmg installer
-4. Implement git pre-commit hooks (block bad code at commit time)
+1. Scale up lesson generation (target 5000+ lessons across all 10 languages)
+2. Expand C2 mastery content (scale up agent generation)
+3. Deploy daemon on Nerion codebase (dogfooding - monitor itself)
+4. Create macOS .dmg installer
+5. Implement git pre-commit hooks (block bad code at commit time)
 
 **Medium-term (3-6 months):**
 1. Reach 90% GNN accuracy (Phase 1-6 complete)
-2. Multi-language support (JavaScript, TypeScript, Go)
-3. Auto-fix mode with confidence thresholds (>95% = auto, <95% = suggest)
-4. Community lesson marketplace (share/download curriculum)
+2. Auto-fix mode with confidence thresholds (>95% = auto, <95% = suggest)
+3. Community lesson marketplace (share/download curriculum)
+4. Balance curriculum across 10 languages (maintain 20/20/20/15/8/5/4/3/3/2 distribution)
 
 ### V1 (6-12 months): Production Ready
-- Multi-language support (JS, TS, Go, Rust)
+- ✅ Multi-language support (COMPLETE - 10 languages operational)
 - CI/CD integrations (GitHub Actions, GitLab CI, CircleCI)
 - Cloud-hosted brain option (SaaS for pre-trained models)
 - Auto-fix mode (confidence >95%)
@@ -965,68 +978,7 @@ Complete Phase 1, reach 75-80% accuracy, deploy daemon on Nerion codebase (dogfo
 
 ---
 
-## ⚠️ Context Window Management
-
-### Critical Information
-- **Total Context Window:** 200,000 tokens
-- **Auto-Compacting Threshold:** ~150,000 tokens (75%)
-- **Warning Calculation:** Based on 150K, NOT 200K
-
-**Why This Matters:** Claude Code starts auto-compacting around 150K tokens, not at the full 200K limit. Calculations must reflect the ACTUAL compacting point.
-
-### Proactive Task Planning (REQUIRED)
-
-**Before starting ANY new task, calculate:**
-
-1. **Current tokens used** (from conversation metadata)
-2. **Effective remaining** = 150,000 - current_tokens (NOT 200K - current_tokens)
-3. **Estimated tokens for task:**
-   - Simple query/explanation: ~5-10K
-   - Reading files + analysis: ~15-25K
-   - Training single GNN: ~20-30K
-   - Multi-architecture training + analysis: ~40-60K
-   - Major refactor with tests: ~30-50K
-   - Dataset generation + training: ~50-80K
-
-4. **Decision:**
-   - If `estimated_task_tokens < effective_remaining`: ✅ Proceed
-   - If `estimated_task_tokens >= effective_remaining`: 🚨 **STOP and warn user to compact first**
-
-**Example:**
-```
-Current: 130K tokens used
-Remaining: 150K - 130K = 20K tokens available
-Task: "Train all 4 GNN architectures and compare results"
-Estimate: ~50K tokens needed
-Decision: ⚠️ INSUFFICIENT - Need to compact before starting
-```
-
-**Warning Format:**
-```
-⚠️ Context Warning: Task requires ~50K tokens but only 20K available before auto-compact.
-Recommend compacting context now before starting this task.
-Current: 130K / 150K effective limit (87%)
-```
-
-### Warning Thresholds (Based on 150K)
-
-| Token Usage | Percentage | Status | Action |
-|-------------|-----------|--------|--------|
-| < 105K | < 70% | ✅ Healthy | Continue normally |
-| 105K - 120K | 70-80% | ⚠️ Caution | Check task size before proceeding |
-| 120K - 135K | 80-90% | 🔶 Warning | Only small tasks, plan to compact |
-| 135K - 150K | 90-100% | 🚨 Critical | Compact before any new task |
-| > 150K | > 100% | 💥 Compacting | Auto-compact in progress |
-
-### How to Request Manual Compact
-**Best Practice:** Compact at natural breakpoints (task completion, before major changes)
-
-```
-"Please provide a summary for context compacting"
-```
-
----
-
 *CLAUDE.md is the single source of truth for understanding Nerion.*
 *CHANGELOG.md is the authoritative history of confirmed changes.*
 - remember, whenever creating a one time migration script/test-file for one time use, or any other one time use files, whenever the job is done make sure not to leave the one time use file in the directory, always delete that file.
+- make sure not to overflow the directory with MD files, double check if there is a md file present for current implemantation update that one instead of creating new ones. and again make sure to follow claude.md rules and log all verified changes in changelog.md

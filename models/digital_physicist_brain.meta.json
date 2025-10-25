@@ -1,0 +1,16 @@
+{
+  "architecture": "sage",
+  "attention_heads": 4,
+  "best_epoch": 32,
+  "best_val_accuracy": 0.6185185185185185,
+  "best_val_auc": 0.7037588183421517,
+  "best_val_f1": 0.5462555066079295,
+  "dropout": 0.2,
+  "hidden_channels": 256,
+  "num_layers": 4,
+  "num_node_features": 800,
+  "pooling": "mean",
+  "residual": false,
+  "run_dir": "out/training_runs/phase1_sage_codebert/20251024T231438Z",
+  "trained_at": "2025-10-24T23:14:38.884090+00:00"
+}
