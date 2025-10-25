@@ -98,7 +98,10 @@ export default function Terminal() {
       }
 
       ws.onclose = (event) => {
-        console.log('[Terminal] Disconnected', event.code, event.reason)
+        // Reduce console noise - only log if it was an established connection
+        if (reconnectAttemptsRef.current === 0) {
+          console.log('[Terminal] Disconnected')
+        }
         setConnected(false)
 
         // Only attempt reconnection if not intentionally closed
@@ -110,7 +113,10 @@ export default function Terminal() {
       }
 
       ws.onerror = (error) => {
-        console.error('[Terminal] WebSocket error:', error)
+        // Reduce console noise - only log first error
+        if (reconnectAttemptsRef.current === 0) {
+          console.warn('[Terminal] Connection failed (terminal server may not be ready)')
+        }
         setConnected(false)
       }
 

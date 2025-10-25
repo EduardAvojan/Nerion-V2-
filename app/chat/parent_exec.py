@@ -128,6 +128,74 @@ def build_executor(*, ensure_network_for: EnsureNetCB, get_heard: GetHeardCB, pa
         except Exception as e:
             return {"error": str(e)}
 
+    def _list_recent_files_from_parent(limit: Optional[int] = None, directory: Optional[str] = None, **kwargs):
+        try:
+            import pathlib
+            from datetime import datetime
+
+            # Default to repo root if no directory specified
+            if directory:
+                base_path = _fs_guard.ensure_in_repo_auto(directory)
+            else:
+                base_path = pathlib.Path.cwd()
+
+            limit = int(limit) if limit else 10
+            limit = max(1, min(50, limit))  # Clamp between 1-50
+
+            # Get all files (not directories) recursively
+            all_files = []
+            for p in base_path.rglob('*'):
+                if p.is_file() and not any(part.startswith('.') for part in p.parts):
+                    try:
+                        mtime = p.stat().st_mtime
+                        all_files.append((p, mtime))
+                    except Exception:
+                        continue
+
+            # Sort by modification time (newest first)
+            all_files.sort(key=lambda x: x[1], reverse=True)
+
+            # Format results
+            results = []
+            for p, mtime in all_files[:limit]:
+                rel_path = p.relative_to(pathlib.Path.cwd()) if p.is_relative_to(pathlib.Path.cwd()) else p
+                dt = datetime.fromtimestamp(mtime)
+                results.append({
+                    "path": str(rel_path),
+                    "modified": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "timestamp": int(mtime)
+                })
+
+            return {"files": results, "count": len(results)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _find_files_from_parent(pattern: Optional[str] = None, directory: Optional[str] = None, **kwargs):
+        try:
+            import pathlib
+
+            # Default to repo root if no directory specified
+            if directory:
+                base_path = _fs_guard.ensure_in_repo_auto(directory)
+            else:
+                base_path = pathlib.Path.cwd()
+
+            pattern = pattern or "*"
+
+            # Find matching files
+            matches = []
+            for p in base_path.rglob(pattern):
+                if p.is_file() and not any(part.startswith('.') for part in p.parts):
+                    try:
+                        rel_path = p.relative_to(pathlib.Path.cwd()) if p.is_relative_to(pathlib.Path.cwd()) else p
+                        matches.append(str(rel_path))
+                    except Exception:
+                        continue
+
+            return {"files": sorted(matches), "count": len(matches), "pattern": pattern}
+        except Exception as e:
+            return {"error": str(e)}
+
     # Load allowed tools from config/tools.yaml
     # Note: keep local, offline-safe utilities always allowed to avoid breaking
     # tests and basic UX when the manifest omits them.
@@ -138,6 +206,8 @@ def build_executor(*, ensure_network_for: EnsureNetCB, get_heard: GetHeardCB, pa
         allowed_set.update({
             "read_file",
             "summarize_file",
+            "list_recent_files",
+            "find_files",
             "run_healthcheck",
             "run_diagnostics",
             "list_plugins",
@@ -157,6 +227,8 @@ def build_executor(*, ensure_network_for: EnsureNetCB, get_heard: GetHeardCB, pa
         run_pytest_smoke=_run_pytest_smoke_from_parent,
         read_file=_read_file_from_parent,
         summarize_file=_summarize_file_from_parent,
+        list_recent_files=_list_recent_files_from_parent,
+        find_files=_find_files_from_parent,
         ensure_network=lambda required: ensure_network_for('web_search', None) if required else None,
         allowed_tools=allowed,
         metrics_hook=metrics_hook,

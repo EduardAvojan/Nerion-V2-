@@ -2,16 +2,92 @@ import React, { useState } from 'react'
 import './SettingsPanel.css'
 
 export default function SettingsPanel({ isOpen, onClose, theme, onThemeChange }) {
+  // Model catalog mapping (from config/model_catalog.yaml)
+  const modelsByProvider = {
+    anthropic: {
+      chat: [
+        { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+        { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+        { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+        { value: 'claude-opus-4-1-20250805', label: 'Claude Opus 4.1' },
+        { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' }
+      ],
+      code: [
+        { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+        { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+        { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+        { value: 'claude-opus-4-1-20250805', label: 'Claude Opus 4.1' },
+        { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' }
+      ],
+      planner: [
+        { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+        { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+        { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+        { value: 'claude-opus-4-1-20250805', label: 'Claude Opus 4.1' }
+      ]
+    },
+    openai: {
+      chat: [
+        { value: 'gpt-5', label: 'GPT-5' },
+        { value: 'gpt-4', label: 'GPT-4' }
+      ],
+      code: [
+        { value: 'gpt-5', label: 'GPT-5' },
+        { value: 'gpt-4', label: 'GPT-4' }
+      ],
+      planner: []
+    },
+    google: {
+      chat: [
+        { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' }
+      ],
+      code: [
+        { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' }
+      ],
+      planner: [
+        { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' }
+      ]
+    },
+    vertexai: {
+      chat: [
+        { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+        { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+        { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+        { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' }
+      ],
+      code: [
+        { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+        { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+        { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+        { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' }
+      ],
+      planner: [
+        { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+        { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+        { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' }
+      ]
+    }
+  }
+
   const [settings, setSettings] = useState({
     voice: {
       enabled: true,
       provider: 'openai',
       model: 'whisper-1'
     },
-    llm: {
-      provider: 'anthropic',
-      model: 'claude-3-5-sonnet-20241022',
-      temperature: 0.7
+    providers: {
+      chat: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5-20250929'
+      },
+      code: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5-20250929'
+      },
+      planner: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5-20250929'
+      }
     },
     network: {
       autoUpdate: true,
@@ -50,9 +126,34 @@ export default function SettingsPanel({ isOpen, onClose, theme, onThemeChange })
     }
   }
 
+  const handleProviderChange = (role, key, value) => {
+    setSettings(prev => ({
+      ...prev,
+      providers: {
+        ...prev.providers,
+        [role]: {
+          ...prev.providers[role],
+          [key]: value
+        }
+      }
+    }))
+  }
+
   const handleSave = () => {
-    // TODO: Save settings to backend/localStorage
     console.log('Saving settings:', settings)
+
+    // Send provider settings to backend via IPC
+    if (window.nerion && window.nerion.send) {
+      window.nerion.send('save-settings', {
+        providers: settings.providers,
+        voice: settings.voice,
+        network: settings.network,
+        learning: settings.learning,
+        immune: settings.immune,
+        ui: settings.ui
+      })
+    }
+
     onClose()
   }
 
@@ -101,59 +202,112 @@ export default function SettingsPanel({ isOpen, onClose, theme, onThemeChange })
             </div>
           </section>
 
-          {/* LLM Settings */}
+          {/* Chat Provider Settings */}
           <section className="settings-section">
-            <h3>🤖 Language Model</h3>
+            <h3>💬 Chat Provider</h3>
+            <p className="section-description">For Genesis conversations and voice interactions</p>
             <div className="setting-item">
               <label>Provider</label>
               <select
-                value={settings.llm.provider}
-                onChange={(e) => handleChange('llm', 'provider', e.target.value)}
+                value={settings.providers.chat.provider}
+                onChange={(e) => {
+                  const newProvider = e.target.value
+                  const firstModel = modelsByProvider[newProvider]?.chat[0]?.value || ''
+                  handleProviderChange('chat', 'provider', newProvider)
+                  if (firstModel) {
+                    handleProviderChange('chat', 'model', firstModel)
+                  }
+                }}
               >
                 <option value="anthropic">Anthropic Claude</option>
                 <option value="openai">OpenAI GPT</option>
-                <option value="ollama">Ollama (Local)</option>
+                <option value="google">Google Gemini</option>
               </select>
             </div>
             <div className="setting-item">
               <label>Model</label>
               <select
-                value={settings.llm.model}
-                onChange={(e) => handleChange('llm', 'model', e.target.value)}
+                value={settings.providers.chat.model}
+                onChange={(e) => handleProviderChange('chat', 'model', e.target.value)}
               >
-                {settings.llm.provider === 'anthropic' && (
-                  <>
-                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
-                    <option value="claude-3-opus-20240229">Claude 3 Opus</option>
-                    <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
-                  </>
-                )}
-                {settings.llm.provider === 'openai' && (
-                  <>
-                    <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                    <option value="gpt-4">GPT-4</option>
-                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-                  </>
-                )}
-                {settings.llm.provider === 'ollama' && (
-                  <>
-                    <option value="llama2">Llama 2</option>
-                    <option value="codellama">Code Llama</option>
-                    <option value="mistral">Mistral</option>
-                  </>
-                )}
+                {modelsByProvider[settings.providers.chat.provider]?.chat.map(model => (
+                  <option key={model.value} value={model.value}>{model.label}</option>
+                ))}
+              </select>
+            </div>
+          </section>
+
+          {/* Code Provider Settings */}
+          <section className="settings-section">
+            <h3>💻 Code Provider</h3>
+            <p className="section-description">For code generation and analysis</p>
+            <div className="setting-item">
+              <label>Provider</label>
+              <select
+                value={settings.providers.code.provider}
+                onChange={(e) => {
+                  const newProvider = e.target.value
+                  const firstModel = modelsByProvider[newProvider]?.code[0]?.value || ''
+                  handleProviderChange('code', 'provider', newProvider)
+                  if (firstModel) {
+                    handleProviderChange('code', 'model', firstModel)
+                  }
+                }}
+              >
+                <option value="anthropic">Anthropic Claude</option>
+                <option value="openai">OpenAI GPT</option>
+                <option value="google">Google Gemini</option>
               </select>
             </div>
             <div className="setting-item">
-              <label>Temperature: {settings.llm.temperature}</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                value={settings.llm.temperature}
-                onChange={(e) => handleChange('llm', 'temperature', parseFloat(e.target.value))}
-              />
+              <label>Model</label>
+              <select
+                value={settings.providers.code.model}
+                onChange={(e) => handleProviderChange('code', 'model', e.target.value)}
+              >
+                {modelsByProvider[settings.providers.code.provider]?.code.map(model => (
+                  <option key={model.value} value={model.value}>{model.label}</option>
+                ))}
+              </select>
+            </div>
+          </section>
+
+          {/* Planner Provider Settings */}
+          <section className="settings-section">
+            <h3>🎯 Planner Provider</h3>
+            <p className="section-description">For task planning and decomposition</p>
+            <div className="setting-item">
+              <label>Provider</label>
+              <select
+                value={settings.providers.planner.provider}
+                onChange={(e) => {
+                  const newProvider = e.target.value
+                  const firstModel = modelsByProvider[newProvider]?.planner[0]?.value || ''
+                  handleProviderChange('planner', 'provider', newProvider)
+                  if (firstModel) {
+                    handleProviderChange('planner', 'model', firstModel)
+                  }
+                }}
+              >
+                <option value="anthropic">Anthropic Claude</option>
+                <option value="google">Google Gemini</option>
+              </select>
+            </div>
+            <div className="setting-item">
+              <label>Model</label>
+              <select
+                value={settings.providers.planner.model}
+                onChange={(e) => handleProviderChange('planner', 'model', e.target.value)}
+                disabled={modelsByProvider[settings.providers.planner.provider]?.planner.length === 0}
+              >
+                {modelsByProvider[settings.providers.planner.provider]?.planner.length > 0 ? (
+                  modelsByProvider[settings.providers.planner.provider]?.planner.map(model => (
+                    <option key={model.value} value={model.value}>{model.label}</option>
+                  ))
+                ) : (
+                  <option value="">No models available for this provider</option>
+                )}
+              </select>
             </div>
           </section>
 

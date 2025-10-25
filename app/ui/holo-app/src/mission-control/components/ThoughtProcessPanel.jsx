@@ -13,22 +13,80 @@ export default function ThoughtProcessPanel() {
     thoughtsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [thoughts])
 
-  // Example data - will be replaced with real WebSocket events
+  // Listen to real-time thought process events from backend
   useEffect(() => {
-    // Simulate initial thoughts
-    const demoThoughts = [
-      { id: 1, text: 'Analyzing codebase structure...', timestamp: new Date(), status: 'completed' },
-      { id: 2, text: 'Scanning for potential bugs...', timestamp: new Date(), status: 'completed' },
-      { id: 3, text: 'Evaluating test coverage...', timestamp: new Date(), status: 'in_progress' }
-    ]
-    setThoughts(demoThoughts)
+    if (!window.nerion) {
+      console.warn('[ThoughtProcess] window.nerion not available')
+      return
+    }
 
-    const demoExplainability = [
-      { reason: 'Pattern matching', confidence: 0.92, description: 'Detected common bug pattern in auth.py' },
-      { reason: 'Context analysis', confidence: 0.87, description: 'Similar fix applied 3 times before' },
-      { reason: 'Risk assessment', confidence: 0.95, description: 'Low risk - test coverage 98%' }
-    ]
-    setExplainability(demoExplainability)
+    const unsubscribe = window.nerion.onEvent((event) => {
+      if (!event || !event.type) return
+
+      // Handle thought step events
+      if (event.type === 'thought_step') {
+        const payload = event.payload || {}
+        const thoughtId = payload.id
+        const title = payload.title || ''
+        const detail = payload.detail || ''
+        const status = payload.status || 'pending' // pending, active, complete, failed
+        const timestamp = new Date(payload.ts || Date.now())
+
+        setThoughts(prev => {
+          // Check if thought already exists
+          const existingIndex = prev.findIndex(t => t.id === thoughtId)
+
+          if (existingIndex >= 0) {
+            // Update existing thought
+            const updated = [...prev]
+            updated[existingIndex] = {
+              ...updated[existingIndex],
+              text: title,
+              detail: detail,
+              status: status === 'active' ? 'in_progress' : status,
+              timestamp: timestamp,
+              duration: payload.duration
+            }
+            return updated
+          } else {
+            // Add new thought
+            return [...prev, {
+              id: thoughtId,
+              text: title,
+              detail: detail,
+              status: status === 'active' ? 'in_progress' : status,
+              timestamp: timestamp,
+              duration: payload.duration
+            }]
+          }
+        })
+      }
+
+      // Handle confidence/explainability events
+      if (event.type === 'confidence') {
+        const payload = event.payload || {}
+        const score = payload.score || payload.value || 0
+        const drivers = payload.drivers || []
+
+        if (drivers.length > 0) {
+          setExplainability(drivers.map(driver => ({
+            reason: driver,
+            confidence: score,
+            description: driver
+          })))
+        }
+      }
+
+      // Handle state events to reset thoughts on new turns
+      if (event.type === 'state' && event.payload?.reset_thoughts) {
+        setThoughts([])
+        setExplainability([])
+      }
+    })
+
+    return () => {
+      if (unsubscribe) unsubscribe()
+    }
   }, [])
 
   const handleClearThoughts = () => {

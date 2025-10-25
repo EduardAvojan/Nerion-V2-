@@ -34,6 +34,16 @@ def emit(event_type: str, payload: Optional[dict[str, Any]] = None) -> None:
         msg = {"type": event_type}
         if payload is not None:
             msg["payload"] = payload
+        # Debug logging for chat_turn events
+        try:
+            if event_type == "chat_turn":
+                with open("/tmp/nerion_ipc_debug.log", "a") as f:
+                    import datetime
+                    role = payload.get("role") if payload else None
+                    text_preview = (payload.get("text") if payload else "")[:50]
+                    f.write(f"[{datetime.datetime.now()}] Emitting chat_turn: role={role}, text={text_preview}...\n")
+        except Exception:
+            pass
         # Use stdout line protocol consumed by Electron main process
         stdout = getattr(sys, '__stdout__', sys.stdout)
         stdout.write(json.dumps(msg) + "\n")
@@ -103,6 +113,14 @@ def _reader_loop():
                 continue
             mtype = str(data.get("type") or "").strip().lower()
             payload = data.get("payload") or {}
+            # Debug logging for chat messages
+            try:
+                if mtype == "chat":
+                    with open("/tmp/nerion_ipc_debug.log", "a") as f:
+                        import datetime
+                        f.write(f"[{datetime.datetime.now()}] Received chat: {payload}\n")
+            except Exception:
+                pass
             if mtype == "chat":
                 text = str((payload.get("text") if isinstance(payload, dict) else payload) or "").strip()
                 if text:

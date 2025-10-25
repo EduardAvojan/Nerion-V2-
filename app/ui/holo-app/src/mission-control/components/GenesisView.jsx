@@ -20,12 +20,7 @@ export default function GenesisView() {
     { id: 2, file: 'scoring.py', action: 'Refactor scoring patterns', impact: 'low', risk: 'low', type: 'refactor' },
     { id: 3, file: 'auth.py', action: 'Add rate limiting', impact: 'high', risk: 'medium', type: 'security' }
   ])
-  const [learningTimeline, setLearningTimeline] = useState([
-    { id: 1, time: '2m ago', event: 'Learned pattern: null check before dereference', success: true },
-    { id: 2, time: '15m ago', event: 'Discovered optimization: cache frequent queries', success: true },
-    { id: 3, time: '1h ago', event: 'Applied fix: memory leak in event loop', success: true },
-    { id: 4, time: '3h ago', event: 'Completed training epoch 47 (acc: 94.2%)', success: true }
-  ])
+  const [learningTimeline, setLearningTimeline] = useState([])
   const [stats, setStats] = useState({
     activeExperiments: 3,
     pendingMods: 3,
@@ -41,6 +36,73 @@ export default function GenesisView() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Listen for REAL Nerion responses
+  useEffect(() => {
+    if (!window.nerion?.onEvent) return
+
+    const unsubscribe = window.nerion.onEvent((data) => {
+      // Listen for chat_turn events (Nerion's response format)
+      if (data.type === 'chat_turn' && data.payload?.role === 'assistant') {
+        const text = data.payload.text
+
+        // Filter out system prompts (upgrade messages, etc.)
+        const isSystemPrompt = text.includes('Self Learning Upgrade Available') ||
+                               text.includes('Say \'upgrade now\'') ||
+                               text.includes('remind me later')
+
+        if (text && !isSystemPrompt) {
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            text: text
+          }])
+        }
+      }
+
+      // Listen for learning_timeline events
+      if (data.type === 'learning_timeline') {
+        const payload = data.payload || {}
+        const events = payload.events || []
+
+        console.log('[Genesis] Received learning_timeline events:', events)
+
+        // Transform backend events to display format
+        const formatted = events.map(evt => {
+          // Format the event text based on available fields
+          let eventText = evt.summary || evt.key || 'Learning event'
+
+          // If we have both key and value, create a readable message
+          if (evt.key && evt.value) {
+            const keyFormatted = evt.key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+            eventText = `${keyFormatted}: ${evt.value}`
+          }
+
+          return {
+            id: evt.id,
+            time: evt.timestamp || 'now',
+            event: eventText,
+            success: true,
+            scope: evt.scope,
+            confidence: evt.confidence
+          }
+        })
+
+        console.log('[Genesis] Setting learning timeline:', formatted)
+        setLearningTimeline(formatted)
+      }
+    })
+
+    // Request initial learning timeline from backend
+    if (window.nerion.send) {
+      window.nerion.send('learning', { action: 'refresh' })
+    }
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe()
+      }
+    }
+  }, [])
 
   // Simulate phase progression
   useEffect(() => {
@@ -63,13 +125,27 @@ export default function GenesisView() {
     // Add user message
     setMessages(prev => [...prev, { role: 'user', text: inputValue }])
 
-    // Simulate Genesis response
-    setTimeout(() => {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        text: `I'm analyzing your request: "${inputValue}". Starting experiments to validate the approach...`
-      }])
-    }, 1000)
+    // Send to REAL Nerion via IPC
+    console.log('[Genesis] window.nerion available:', !!window.nerion)
+    console.log('[Genesis] window.nerion:', window.nerion)
+
+    try {
+      if (!window.nerion || !window.nerion.send) {
+        throw new Error('window.nerion.send not available')
+      }
+      console.log('[Genesis] Sending message to Nerion:', inputValue)
+      window.nerion.send('chat', { text: inputValue })
+      console.log('[Genesis] Message sent successfully')
+    } catch (error) {
+      console.error('[Genesis] Failed to send message:', error)
+      // Fallback to fake response if IPC not available
+      setTimeout(() => {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          text: `[Offline Mode] I'm analyzing your request: "${inputValue}". Starting experiments to validate the approach...`
+        }])
+      }, 1000)
+    }
 
     setInputValue('')
   }
@@ -256,17 +332,23 @@ export default function GenesisView() {
           <div className="status-card">
             <h4>📚 Learning Timeline</h4>
             <div className="learning-timeline">
-              {learningTimeline.map(event => (
-                <div key={event.id} className="timeline-event">
-                  <div className="timeline-marker">
-                    {event.success ? '✓' : '✕'}
+              {learningTimeline.length > 0 ? (
+                learningTimeline.map(event => (
+                  <div key={event.id} className="timeline-event">
+                    <div className="timeline-marker">
+                      {event.success ? '✓' : '✕'}
+                    </div>
+                    <div className="timeline-content">
+                      <div className="timeline-text">{event.event}</div>
+                      <div className="timeline-time">{event.time}</div>
+                    </div>
                   </div>
-                  <div className="timeline-content">
-                    <div className="timeline-text">{event.event}</div>
-                    <div className="timeline-time">{event.time}</div>
-                  </div>
+                ))
+              ) : (
+                <div style={{ color: 'var(--text-dim)', fontSize: '13px', padding: '8px' }}>
+                  No learning events yet
                 </div>
-              ))}
+              )}
             </div>
           </div>
 

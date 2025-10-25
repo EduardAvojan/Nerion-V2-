@@ -18,6 +18,7 @@ from app.parent.driver import ParentDriver, ParentLLM
 from app.parent.tools_manifest import ToolsManifest as _ToolsManifest
 from app.parent.tools_manifest import load_tools_manifest_from_yaml as _load_manifest_from_yaml
 from app.logging.experience import ExperienceLogger as _ExperienceLogger
+from app.logging.quality_scorer import evaluate_response_quality as _evaluate_response_quality
 
 # Commands / IO / intents
 from .commands import try_parse_command, handle_command, is_command, handle_core_controls
@@ -506,10 +507,15 @@ else:
 def _load_tools_manifest() -> _ToolsManifest:
     try:
         if os.path.exists(os.path.join('config','tools.yaml')):
-            return _load_manifest_from_yaml(os.path.join('config','tools.yaml'))
-    except Exception:
-        pass
+            manifest = _load_manifest_from_yaml(os.path.join('config','tools.yaml'))
+            print(f'[Parent] Loaded {len(manifest.tools)} tools from config/tools.yaml')
+            return manifest
+    except Exception as e:
+        print(f'[Parent] WARNING: Failed to load tools manifest: {e}')
+        import traceback
+        traceback.print_exc()
     # Fallback: empty manifest is allowed; Parent still plans in abstract
+    print('[Parent] Using empty tools manifest (fallback)')
     return _ToolsManifest(tools=[])
 
 class _NoopParentLLM(ParentLLM):
@@ -526,17 +532,11 @@ class _NoopParentLLM(ParentLLM):
 _PARENT_DRIVER = None
 if _PARENT_ENABLED:
     try:
-        # Try to use DeepSeek local model first
-        try:
-            from app.parent.deepseek_local import DeepSeekLocalLLM
-            _PARENT_DRIVER = ParentDriver(llm=DeepSeekLocalLLM(), tools=_load_tools_manifest())
-            if DEBUG:
-                print('[Parent] Master\'s Voice enabled (DeepSeek local adapter).')
-        except ImportError:
-            # Fall back to Noop adapter if DeepSeek isn't available
-            _PARENT_DRIVER = ParentDriver(llm=_NoopParentLLM(), tools=_load_tools_manifest())
-            if DEBUG:
-                print('[Parent] Master\'s Voice enabled (Noop adapter - DeepSeek not found).')
+        # Use provider-registry-backed Parent LLM (configured via UI settings)
+        from app.parent.driver import _RegistryParentLLM
+        _PARENT_DRIVER = ParentDriver(llm=_RegistryParentLLM(role='planner', temperature=0.1), tools=_load_tools_manifest())
+        if DEBUG:
+            print('[Parent] Master\'s Voice enabled (Provider Registry adapter).')
     except Exception as e:
         _PARENT_DRIVER = None
         print(f'[Parent] Failed to initialize: {e}; continuing without Parent.')
@@ -602,21 +602,55 @@ def run_main_loop(STATE, voice_cfg) -> None:
         _ipc.register_handler('patch', router.handle_patch)
         _ipc.register_handler('selfcode', router.handle_selfcode)
         _ipc.register_handler('mode', router.handle_mode)
-        with suppress(Exception):
+        try:
             router.refresh_memory()
+        except Exception as e:
+            print(f'[INIT] refresh_memory failed: {e}', file=sys.stderr)
+
+        try:
             router.handle_learning({'action': 'refresh'})
+        except Exception as e:
+            print(f'[INIT] handle_learning failed: {e}', file=sys.stderr)
+
+        try:
             router.handle_upgrade({'action': 'refresh'})
+        except Exception as e:
+            print(f'[INIT] handle_upgrade failed: {e}', file=sys.stderr)
+
+        try:
             router.handle_artifact({'action': 'refresh'})
+        except Exception as e:
+            print(f'[INIT] handle_artifact failed: {e}', file=sys.stderr)
+
+        try:
             router._emit_health_status()
+        except Exception as e:
+            print(f'[INIT] _emit_health_status failed: {e}', file=sys.stderr)
+
+        try:
             router.emit_settings_bootstrap()
+        except Exception as e:
+            print(f'[INIT] emit_settings_bootstrap failed: {e}', file=sys.stderr)
+
+        try:
             _ipc.emit('state', {
                 'phase': 'standby',
                 'interaction_mode': 'talk' if STATE.voice.ptt else 'chat',
                 'speech_enabled': bool(getattr(STATE.voice, 'enabled', True)),
                 'muted': bool(getattr(STATE, 'muted', False)),
             })
+        except Exception as e:
+            print(f'[INIT] emit state failed: {e}', file=sys.stderr)
+
+        try:
             router.emit_llm_options()
+        except Exception as e:
+            print(f'[INIT] emit_llm_options failed: {e}', file=sys.stderr)
+
+        try:
             router.emit_metrics()
+        except Exception as e:
+            print(f'[INIT] emit_metrics failed: {e}', file=sys.stderr)
 
     # Load data-driven intent rules (from config/intents.yaml) once per session
     try:
@@ -895,6 +929,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
                 _start_response(detail, status='active')
                 print('Nerion:', text)
                 safe_speak(text, watcher)
+
+                # Forward assistant turn to UI for Genesis chat
+                try:
+                    if _ipc.enabled():
+                        _ipc.emit('chat_turn', {'role': 'assistant', 'text': text})
+                except Exception:
+                    pass
+
                 try:
                     STATE.append_turn('assistant', text)
                 except Exception:
@@ -1252,7 +1294,7 @@ def run_main_loop(STATE, voice_cfg) -> None:
             parent_decision_dict = None
             if _PARENT_DRIVER and (os.getenv('NERION_PARENT_EAGER', '').strip().lower() in {'1','true','yes','on'}):
                 try:
-                    dec = _PARENT_DRIVER.plan_and_route(user_query=heard, context_snippet=None)
+                    dec = _PARENT_DRIVER.plan_and_route(user_query=heard)
                     parent_decision_dict = dec.dict()
                 except Exception:
                     parent_decision_dict = {"intent": "error", "plan": []}
@@ -1387,6 +1429,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
                             if txt:
                                 print('Nerion:', txt)
                                 safe_speak(txt, watcher)
+
+                                # Forward assistant turn to UI for Genesis chat
+                                try:
+                                    if _ipc.enabled():
+                                        _ipc.emit('chat_turn', {'role': 'assistant', 'text': txt})
+                                except Exception:
+                                    pass
+
                                 try:
                                     STATE.append_turn('assistant', txt)
                                 except Exception:
@@ -1525,6 +1575,9 @@ def run_main_loop(STATE, voice_cfg) -> None:
                         call_parent = True
                     if re.search(r'\b(rename|refactor|extract)\b', hlow):
                         call_parent = True
+                    # File operations → allow planner to pick file tools
+                    if re.search(r'\b(file|files)\b', hlow) and re.search(r'\b(show|list|find|recent|modified|changed|updated|created|deleted|search|locate|where)\b', hlow):
+                        call_parent = True
                     # System/diagnostic and dev verbs → allow planner to pick tools
                     if re.search(r'\b(run|scan|check|diagnose|diagnostic|health\s*(check|scan)?|update|test|benchmark|audit|format|lint|apply)\b', hlow):
                         call_parent = True
@@ -1535,7 +1588,7 @@ def run_main_loop(STATE, voice_cfg) -> None:
                             # Allow a bit more time for command verbs
                             timeout_s = float(os.getenv('NERION_PARENT_TIMEOUT_S_CMD', '5.0'))
                         with _futures.ThreadPoolExecutor(max_workers=1) as ex:
-                            fut = ex.submit(_PARENT_DRIVER.plan_and_route, user_query=heard, context_snippet=None)
+                            fut = ex.submit(_PARENT_DRIVER.plan_and_route, user_query=heard)
                             with _Busy("Thinking through a plan…", start_delay_s=2.0):
                                 try:
                                     dec = fut.result(timeout=timeout_s)
@@ -1591,6 +1644,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
                                     if txt:
                                         print('Nerion:', txt)
                                         safe_speak(txt, watcher)
+
+                                        # Forward assistant turn to UI for Genesis chat
+                                        try:
+                                            if _ipc.enabled():
+                                                _ipc.emit('chat_turn', {'role': 'assistant', 'text': txt})
+                                        except Exception:
+                                            pass
+
                                         try:
                                             STATE.append_turn('assistant', txt)
                                         except Exception:
@@ -1741,6 +1802,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
                         pass
                     print('Nerion:', note)
                     safe_speak(note, watcher)
+
+                    # Forward assistant turn to UI for Genesis chat
+                    try:
+                        if _ipc.enabled():
+                            _ipc.emit('chat_turn', {'role': 'assistant', 'text': note})
+                    except Exception:
+                        pass
+
                     try:
                         STATE.append_turn('assistant', note)
                     except Exception:
@@ -1789,6 +1858,14 @@ def run_main_loop(STATE, voice_cfg) -> None:
             response = _strip_think_blocks(response).strip()
             print('Nerion:', response)
             safe_speak(response, watcher)
+
+            # Forward assistant turn to UI for Genesis chat
+            try:
+                if _ipc.enabled():
+                    _ipc.emit('chat_turn', {'role': 'assistant', 'text': response})
+            except Exception:
+                pass
+
             try:
                 STATE.append_turn('assistant', response)
             except Exception:
@@ -1824,7 +1901,9 @@ def run_main_loop(STATE, voice_cfg) -> None:
             if router:
                 router.on_assistant_turn()
             try:
-                _log_experience(heard, parent_decision_dict, {"routed":"llm_fallback"}, True, None, False)
+                # Evaluate response quality instead of hardcoding success
+                quality_ok = _evaluate_response_quality(heard, response, {"routed":"llm_fallback"}, None)
+                _log_experience(heard, parent_decision_dict, {"routed":"llm_fallback"}, quality_ok, None, False)
             except Exception:
                 pass
             # If the user answered the upgrade prompt here (PTT/text), handle it directly.

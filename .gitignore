@@ -64,6 +64,8 @@ jarvis_memory/
 
 # Electron build artifacts
 app/ui/holo-app/dist/
+app/ui/holo-app/build/
+Nerion.app
 
 # Daemon runtime files
 .nerion/daemon.sock
@@ -166,3 +168,4 @@ external_repos/
 .claude/
 coverage.json
 *.pid
+.genkit/

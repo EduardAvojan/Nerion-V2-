@@ -7,7 +7,11 @@
     "start": "electron .",
     "dev": "electron .",
     "build:react": "vite build",
-    "watch:react": "vite build --watch"
+    "watch:react": "vite build --watch",
+    "generate:icons": "node scripts/generate-icons.js",
+    "build": "npm run build:react && electron-builder",
+    "build:mac": "npm run build:react && electron-builder --mac",
+    "build:dir": "npm run build:react && electron-builder --dir"
   },
   "keywords": [
     "nerion",
@@ -17,15 +21,64 @@
   ],
   "author": "Nerion Team",
   "license": "MIT",
+  "build": {
+    "appId": "com.nerion.missioncontrol",
+    "productName": "Nerion",
+    "directories": {
+      "output": "build"
+    },
+    "files": [
+      "src/**/*",
+      "dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icons/nerion-icon-512.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
-    "@xterm/addon-fit": "^0.10.0"
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "electron": "^38.1.2",
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.11"
+    "electron": "^38.1.2",
+    "electron-builder": "^26.0.12",
+    "sharp": "^0.34.4",
+    "vite": "^7.1.10"
   }
 }

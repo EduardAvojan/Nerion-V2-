@@ -423,12 +423,17 @@ class _AnthropicAdapter(_ProviderAdapter):
             "Content-Type": "application/json",
         }
 
+        # Log API call for debugging
+        print(f"[API] Calling Anthropic API: {model} (url: {url})")
+
         started = time.perf_counter()
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=timeout)
         except requests.RequestException as exc:  # pragma: no cover - network failures
             raise ProviderError(f"Anthropic request failed: {exc}") from exc
         latency = time.perf_counter() - started
+
+        print(f"[API] Anthropic response received in {latency:.2f}s")
 
         if response.status_code >= 400:
             raise ProviderError(
@@ -674,17 +679,35 @@ class ProviderRegistry:
         return cls(_load_yaml(catalog_path), _load_yaml(settings_path))
 
     def _resolve_provider_id(self, role: str, *, use_env: bool = True) -> Optional[str]:
+        # Priority 1: UI settings (for mid-session switching via Mission Control)
+        # Read on EVERY request to allow real-time provider changes
+        from app.chat.ui_settings import get_provider_for_role
+        ui_provider = get_provider_for_role(role)
+        if ui_provider:
+            print(f"[PROVIDER] Resolved role '{role}' from UI settings: {ui_provider}")
+            return ui_provider
+
+        # Priority 2: Environment variables (for CLI/script overrides)
         role_key = (role or "chat").upper().replace("-", "_")
         if use_env:
             env_key = os.getenv(f"NERION_V2_{role_key}_PROVIDER")
             if env_key:
+                print(f"[PROVIDER] Resolved role '{role}' from env NERION_V2_{role_key}_PROVIDER: {env_key}")
                 return env_key
+
+        # Priority 3: settings.yaml role overrides
         llm_settings = (self._settings.get("llm") or {})
         role_overrides = llm_settings.get("roles") or {}
         if role in role_overrides:
-            return role_overrides[role]
+            result = role_overrides[role]
+            print(f"[PROVIDER] Resolved role '{role}' from settings.llm.roles: {result}")
+            return result
+
+        # Priority 4: Fallback to model_catalog.yaml defaults
         if role == "chat":
-            return llm_settings.get("default_provider") or self._defaults.get("chat")
+            result = llm_settings.get("default_provider") or self._defaults.get("chat")
+            print(f"[PROVIDER] Resolved role '{role}' from defaults.chat: {result}")
+            return result
         if role == "planner":
             return llm_settings.get("fallback_provider") or self._defaults.get("planner")
         if role == "code":

@@ -131,11 +131,15 @@ class ElectronCommandRouter:
 
     def _emit(self, event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
         if not _ipc.enabled():
+            print(f'[UI_EMIT] IPC not enabled, skipping event: {event_type}', file=sys.stderr)
             return
         try:
+            # Debug logging to trace event emissions
+            payload_preview = str(payload)[:100] if payload else '{}'
+            print(f'[UI_EMIT] Emitting {event_type} with payload preview: {payload_preview}', file=sys.stderr)
             _ipc.emit(event_type, payload or {})
-        except Exception:
-            pass
+        except Exception as e:
+            print(f'[UI_EMIT] Failed to emit {event_type}: {e}', file=sys.stderr)
 
     def _state_payload(self) -> Dict[str, Any]:
         voice = getattr(self.state, 'voice', None)

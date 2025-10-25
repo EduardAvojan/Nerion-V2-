@@ -8,14 +8,18 @@ let mainWindow;
 let tray;
 let pythonProcess;
 let pythonBuffer = '';
+let terminalServerProcess;
 let daemonSocket = null;
 let daemonStatus = { health: 'unknown', status: 'disconnected' };
+let daemonRetryCount = 0;
+const MAX_DAEMON_RETRIES = 3;
 let isQuitting = false;
 
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 720;
 const PTT_ACCELERATOR = process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space';
 const DAEMON_SOCKET_PATH = path.join(os.homedir(), '.nerion', 'daemon.sock');
+const SETTINGS_PATH = path.join(os.homedir(), '.nerion', 'ui-settings.json');
 
 function getShellEnv() {
   return new Promise((resolve, reject) => {
@@ -56,6 +60,8 @@ function resolvePreload() {
 }
 
 function createWindow() {
+  const iconPath = path.join(__dirname, '../assets/icons/nerion-icon-512.png');
+
   mainWindow = new BrowserWindow({
     width: 1600,
     height: 900,
@@ -64,16 +70,39 @@ function createWindow() {
     backgroundColor: '#0f172a',
     autoHideMenuBar: true,
     title: 'Nerion Mission Control',
+    icon: iconPath,
     webPreferences: {
       preload: resolvePreload(),
       nodeIntegration: false,
       contextIsolation: true,
+      // Enable web security with proper CSP for production
+      webSecurity: !process.env.NERION_DEV_MODE,
     },
+  });
+
+  // Set proper Content Security Policy
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-inline'",
+          "style-src 'self' 'unsafe-inline'",
+          "img-src 'self' data:",
+          "connect-src 'self' ws://localhost:* http://localhost:*",
+          "font-src 'self' data:"
+        ].join('; ')
+      }
+    });
   });
 
   // Load the built React app
   const distPath = path.join(__dirname, '../dist/index.html');
   mainWindow.loadFile(distPath);
+
+  // Open DevTools for debugging
+  mainWindow.webContents.openDevTools();
 
   // Minimize to tray instead of closing
   mainWindow.on('close', (event) => {
@@ -156,11 +185,23 @@ function ensureTray() {
   if (tray) {
     return;
   }
-  const size = 16;
-  const image = nativeImage.createEmpty();
-  image.resize({ width: size, height: size });
-  tray = new Tray(image);
 
+  // Use platform-appropriate tray icon size
+  const trayIconSize = process.platform === 'darwin' ? 16 : 32;
+  const trayIconPath = path.join(__dirname, `../assets/icons/nerion-icon-${trayIconSize}.png`);
+
+  let trayIcon;
+  try {
+    trayIcon = nativeImage.createFromPath(trayIconPath);
+    if (process.platform === 'darwin') {
+      trayIcon = trayIcon.resize({ width: 16, height: 16 });
+    }
+  } catch (error) {
+    console.error('[HOLO] Failed to load tray icon, using empty image:', error);
+    trayIcon = nativeImage.createEmpty();
+  }
+
+  tray = new Tray(trayIcon);
   updateTrayMenu();
 
   tray.on('click', () => {
@@ -180,11 +221,26 @@ function connectToDaemon() {
     daemonSocket.destroy();
   }
 
-  console.log('[HOLO] Connecting to Nerion daemon...');
+  // Stop retrying after MAX_DAEMON_RETRIES attempts
+  if (daemonRetryCount >= MAX_DAEMON_RETRIES) {
+    if (daemonRetryCount === MAX_DAEMON_RETRIES) {
+      console.log('[HOLO] Daemon not available - continuing without immune system monitoring (this is normal for dev mode)');
+      daemonRetryCount++; // Increment to prevent this message from repeating
+    }
+    daemonStatus.status = 'unavailable';
+    daemonStatus.health = 'unknown';
+    updateTrayMenu();
+    return;
+  }
+
+  if (daemonRetryCount > 0) {
+    console.log(`[HOLO] Connecting to Nerion daemon (attempt ${daemonRetryCount + 1}/${MAX_DAEMON_RETRIES})...`);
+  }
 
   daemonSocket = net.createConnection(DAEMON_SOCKET_PATH, () => {
     console.log('[HOLO] Connected to Nerion daemon');
     daemonStatus.status = 'connected';
+    daemonRetryCount = 0; // Reset retry count on successful connection
     updateTrayMenu();
 
     // Request initial status
@@ -213,23 +269,30 @@ function connectToDaemon() {
   });
 
   daemonSocket.on('error', (err) => {
-    console.error('[HOLO] Daemon connection error:', err.message);
-    daemonStatus.status = 'disconnected';
-    daemonStatus.health = 'unknown';
-    updateTrayMenu();
+    if (daemonRetryCount < MAX_DAEMON_RETRIES) {
+      daemonRetryCount++;
+      daemonStatus.status = 'disconnected';
+      daemonStatus.health = 'unknown';
+      updateTrayMenu();
 
-    // Retry connection after 5 seconds
-    setTimeout(connectToDaemon, 5000);
+      // Retry connection after 2 seconds
+      setTimeout(connectToDaemon, 2000);
+    }
   });
 
   daemonSocket.on('close', () => {
-    console.log('[HOLO] Daemon connection closed');
-    daemonStatus.status = 'disconnected';
-    updateTrayMenu();
-    daemonSocket = null;
+    if (daemonSocket) {
+      daemonSocket = null;
+    }
 
-    // Retry connection after 5 seconds
-    setTimeout(connectToDaemon, 5000);
+    if (daemonRetryCount < MAX_DAEMON_RETRIES) {
+      daemonRetryCount++;
+      daemonStatus.status = 'disconnected';
+      updateTrayMenu();
+
+      // Retry connection after 2 seconds
+      setTimeout(connectToDaemon, 2000);
+    }
   });
 }
 
@@ -273,16 +336,43 @@ function stripQuotes(value) {
 
 function spawnPythonBridge(shellEnv = {}) {
   if (pythonProcess) {
+    console.log('[HOLO] Python bridge already running');
     return pythonProcess;
   }
-  // Prefer project-local venv if present
-  const projectRoot = path.resolve(__dirname, '../../../..');
+
+  // Determine project root - handle both dev and packaged modes
+  let projectRoot;
+  if (app.isPackaged) {
+    // In packaged mode, look for Nerion-V2 in user's home directory or use env var
+    const fs = require('fs');
+    const homeNerion = path.join(os.homedir(), 'Nerion-V2');
+    if (process.env.NERION_ROOT && fs.existsSync(process.env.NERION_ROOT)) {
+      projectRoot = process.env.NERION_ROOT;
+    } else if (fs.existsSync(homeNerion)) {
+      projectRoot = homeNerion;
+    } else {
+      // Fallback to looking in common development locations
+      projectRoot = '/Users/ed/Nerion-V2';
+    }
+    console.log('[HOLO] Packaged mode - using Nerion root:', projectRoot);
+  } else {
+    // In dev mode, use relative path from src directory
+    projectRoot = path.resolve(__dirname, '../../../..');
+  }
+
   const venvPy = path.join(projectRoot, '.venv', 'bin', process.platform === 'win32' ? 'python.exe' : 'python');
   const pythonCmd = process.env.NERION_PYTHON || (require('fs').existsSync(venvPy) ? venvPy : 'python3');
   const pyEntry = process.env.NERION_PY_ENTRY || 'app.nerion_chat';
   const pyArgs = splitArgs(process.env.NERION_PY_ARGS).map(stripQuotes);
   const entryArgs = pyEntry.endsWith('.py') ? [pyEntry] : ['-m', pyEntry];
   const args = [...entryArgs, ...pyArgs];
+
+  console.log('[HOLO] Starting Python bridge...');
+  console.log('[HOLO]   Packaged:', app.isPackaged);
+  console.log('[HOLO]   Python:', pythonCmd);
+  console.log('[HOLO]   Args:', args);
+  console.log('[HOLO]   CWD:', projectRoot);
+
   // Ensure we run from the project root so Python can import 'app.nerion_chat'
   const env = {
     ...shellEnv,
@@ -341,7 +431,12 @@ function spawnPythonBridge(shellEnv = {}) {
 
 function dispatchToRenderer(message) {
   if (mainWindow && mainWindow.webContents) {
+    // Debug logging to trace event forwarding
+    const eventType = message && message.type ? message.type : 'unknown';
+    console.log(`[HOLO] Dispatching to renderer: ${eventType}`);
     mainWindow.webContents.send('nerion-event', message);
+  } else {
+    console.warn('[HOLO] Cannot dispatch - mainWindow not ready:', { hasWindow: !!mainWindow, hasWebContents: !!(mainWindow && mainWindow.webContents) });
   }
 }
 
@@ -357,11 +452,110 @@ function sendToPython(message) {
   }
 }
 
+function loadSavedSettings() {
+  const fs = require('fs');
+
+  try {
+    if (fs.existsSync(SETTINGS_PATH)) {
+      const settingsJson = fs.readFileSync(SETTINGS_PATH, 'utf8');
+      const settings = JSON.parse(settingsJson);
+
+      if (settings && settings.providers) {
+        const { chat, code, planner } = settings.providers;
+
+        // Only set env vars if not already set (env vars take precedence)
+        if (chat && chat.provider && chat.model && !process.env.NERION_V2_CHAT_PROVIDER) {
+          process.env.NERION_V2_CHAT_PROVIDER = `${chat.provider}:${chat.model}`;
+          console.log('[HOLO] Loaded chat provider from settings:', process.env.NERION_V2_CHAT_PROVIDER);
+        }
+
+        if (code && code.provider && code.model && !process.env.NERION_V2_CODE_PROVIDER) {
+          process.env.NERION_V2_CODE_PROVIDER = `${code.provider}:${code.model}`;
+          console.log('[HOLO] Loaded code provider from settings:', process.env.NERION_V2_CODE_PROVIDER);
+        }
+
+        if (planner && planner.provider && planner.model && !process.env.NERION_V2_PLANNER_PROVIDER) {
+          process.env.NERION_V2_PLANNER_PROVIDER = `${planner.provider}:${planner.model}`;
+          console.log('[HOLO] Loaded planner provider from settings:', process.env.NERION_V2_PLANNER_PROVIDER);
+        }
+      }
+
+      return settings;
+    }
+  } catch (error) {
+    console.error('[HOLO] Failed to load saved settings:', error);
+  }
+
+  return null;
+}
+
+function handleSaveSettings(settings) {
+  const fs = require('fs');
+
+  if (!settings || !settings.providers) {
+    console.error('[HOLO] Invalid settings payload');
+    return;
+  }
+
+  // Save settings to ~/.nerion/ui-settings.json
+  // Python backend reads this file on EVERY request for real-time provider switching
+  const nerionDir = path.join(os.homedir(), '.nerion');
+  const settingsPath = path.join(nerionDir, 'ui-settings.json');
+
+  try {
+    // Ensure .nerion directory exists
+    if (!fs.existsSync(nerionDir)) {
+      fs.mkdirSync(nerionDir, { recursive: true });
+    }
+
+    // Write settings to file
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    console.log('[HOLO] Settings saved to', settingsPath);
+
+    const { chat, code, planner } = settings.providers;
+    console.log('[HOLO] Provider configuration:');
+    if (chat && chat.provider && chat.model) {
+      console.log(`[HOLO]   Chat: ${chat.provider}:${chat.model}`);
+    }
+    if (code && code.provider && code.model) {
+      console.log(`[HOLO]   Code: ${code.provider}:${code.model}`);
+    }
+    if (planner && planner.provider && planner.model) {
+      console.log(`[HOLO]   Planner: ${planner.provider}:${planner.model}`);
+    }
+    console.log('[HOLO] Next request will use new provider settings (no restart needed)');
+
+    // Send success notification back to renderer
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('nerion-event', {
+        type: 'settings_saved',
+        success: true
+      });
+    }
+  } catch (error) {
+    console.error('[HOLO] Failed to save settings:', error);
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('nerion-event', {
+        type: 'settings_saved',
+        success: false,
+        error: error.message
+      });
+    }
+  }
+}
+
 function registerIpcHandlers() {
   ipcMain.on('nerion-command', (_event, payload) => {
     if (!payload || typeof payload !== 'object') {
       return;
     }
+
+    // Handle save-settings specially
+    if (payload.type === 'save-settings') {
+      handleSaveSettings(payload.payload);
+      return;
+    }
+
     sendToPython(payload);
   });
 
@@ -411,11 +605,89 @@ function cleanupPython() {
   pythonProcess = null;
 }
 
+function spawnTerminalServer() {
+  if (terminalServerProcess) {
+    return terminalServerProcess;
+  }
+
+  // Determine project root - handle both dev and packaged modes
+  let projectRoot;
+  if (app.isPackaged) {
+    const fs = require('fs');
+    const homeNerion = path.join(os.homedir(), 'Nerion-V2');
+    if (process.env.NERION_ROOT && fs.existsSync(process.env.NERION_ROOT)) {
+      projectRoot = process.env.NERION_ROOT;
+    } else if (fs.existsSync(homeNerion)) {
+      projectRoot = homeNerion;
+    } else {
+      projectRoot = '/Users/ed/Nerion-V2';
+    }
+  } else {
+    projectRoot = path.resolve(__dirname, '../../../..');
+  }
+
+  const venvPy = path.join(projectRoot, '.venv', 'bin', process.platform === 'win32' ? 'python.exe' : 'python');
+  const pythonCmd = process.env.NERION_PYTHON || (require('fs').existsSync(venvPy) ? venvPy : 'python3');
+  const terminalServerPath = path.join(projectRoot, 'app', 'api', 'terminal_server.py');
+
+  console.log('[HOLO] Starting terminal server:', terminalServerPath);
+
+  const env = {
+    ...process.env,
+    PYTHONPATH: [projectRoot, process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter),
+  };
+
+  terminalServerProcess = spawn(pythonCmd, [terminalServerPath], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: projectRoot,
+  });
+
+  terminalServerProcess.stdout.on('data', (chunk) => {
+    console.log('[HOLO][terminal-server]', chunk.toString().trim());
+  });
+
+  terminalServerProcess.stderr.on('data', (chunk) => {
+    console.error('[HOLO][terminal-server]', chunk.toString().trim());
+  });
+
+  terminalServerProcess.on('exit', (code, signal) => {
+    console.log('[HOLO] Terminal server exited', { code, signal });
+    terminalServerProcess = null;
+  });
+
+  terminalServerProcess.on('error', (err) => {
+    console.error('[HOLO] Failed to start terminal server', err);
+  });
+
+  return terminalServerProcess;
+}
+
+function cleanupTerminalServer() {
+  if (!terminalServerProcess) {
+    return;
+  }
+  try {
+    terminalServerProcess.kill();
+  } catch (error) {
+    console.error('[HOLO] Error while terminating terminal server', error);
+  }
+  terminalServerProcess = null;
+}
+
 app.on('ready', () => {
+  // Load saved settings before creating window
+  loadSavedSettings();
+
   createWindow();
   ensureTray();
   registerIpcHandlers();
   registerShortcuts();
+
+  // Start terminal server for Mission Control terminal
+  spawnTerminalServer();
+
+  // Start Python bridge for voice/chat functionality
   getShellEnv().then(shellEnv => {
     spawnPythonBridge(shellEnv);
   }).catch(() => {
@@ -428,6 +700,7 @@ app.on('before-quit', () => {
   isQuitting = true;
   unregisterShortcuts();
   cleanupPython();
+  cleanupTerminalServer();
 
   // Send shutdown command to daemon
   if (daemonSocket && daemonSocket.writable) {

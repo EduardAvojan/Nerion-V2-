@@ -49,6 +49,20 @@ tools:
     requires_network: false
 
   # Local File Utilities
+  - name: list_recent_files
+    description: "List recently modified files in the repository, sorted by modification time"
+    requires_network: false
+    args:
+      limit: "Maximum number of files to return (default: 10)"
+      directory: "Directory to search in (default: current repo root)"
+
+  - name: find_files
+    description: "Find files by name pattern or search for files matching criteria"
+    requires_network: false
+    args:
+      pattern: "File name pattern to search for (e.g., '*.py', 'README*')"
+      directory: "Directory to search in (default: current repo root)"
+
   - name: read_file
     description: "Read a text file from within the repository (safely jailed)"
     requires_network: false

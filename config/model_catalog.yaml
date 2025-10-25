@@ -1,9 +1,9 @@
 # Nerion V2 (API-first) provider catalog. Legacy offline sections lifted into Nerion Classic.
 api_providers:
   defaults:
-    chat: vertexai:gemini-2.5-pro
-    code: vertexai:gemini-2.5-pro
-    planner: vertexai:gemini-2.5-pro
+    chat: anthropic:claude-sonnet-4-5-20250929
+    code: anthropic:claude-sonnet-4-5-20250929
+    planner: anthropic:claude-sonnet-4-5-20250929
     embeddings: vertexai:text-embedding-004
   providers:
     openai:

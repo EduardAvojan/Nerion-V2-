@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -26,7 +27,7 @@ EDGE_ROLE_TO_INDEX: Dict[str, int] = {
 }
 
 
-def _function_parameter_names(node: ast.FunctionDef) -> Set[str]:
+def _function_parameter_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> Set[str]:
     """Return all parameter identifiers for ``node``."""
 
     params: Set[str] = set()
@@ -45,9 +46,29 @@ def _function_parameter_names(node: ast.FunctionDef) -> Set[str]:
     return params
 
 
-def _collect_function_facts(node: ast.FunctionDef, source: str) -> Dict[str, object]:
+def _collect_function_facts(node: ast.FunctionDef | ast.AsyncFunctionDef, source: str) -> Dict[str, object]:
     """Gather structural statistics and symbol usage for a function definition."""
 
+    # Check if this node has pre-computed metrics from tree-sitter
+    if hasattr(node, '_custom_metrics'):
+        metrics = node._custom_metrics  # type: ignore
+        return {
+            "lineno": getattr(node, "lineno", 0),
+            "order_index": getattr(node, "lineno", 0),  # overwritten later with ordinal position
+            "line_count": float(metrics['line_count']),
+            "arg_count": float(metrics['arg_count']),
+            "avg_arg_length": float(metrics['avg_arg_length']),
+            "docstring_length": float(metrics['docstring_length']),
+            "branch_count": float(metrics['branch_count']),
+            "call_count": float(metrics['call_count']),
+            "return_count": float(metrics['return_count']),
+            "cyclomatic_complexity": float(metrics['cyclomatic_complexity']),
+            "call_targets": metrics['call_targets'],
+            "reads": metrics['reads'],
+            "writes": metrics['writes'],
+        }
+
+    # Otherwise, extract from Python AST
     params = _function_parameter_names(node)
     docstring = ast.get_docstring(node) or ""
     doc_len = len(docstring.strip())
@@ -204,7 +225,9 @@ def get_node_features(node_name: str, graph: nx.DiGraph) -> List[float]:
         )
     elif node_type in ["call_expr", "comparison", "bool_op", "bin_op", "unary_op", "attribute", "comprehension", "lambda"]:
         # Expression-specific features
-        operator_hash = hash(metadata.get("operator_type", "")) % 1000  # Hash operator name to numeric
+        # Use deterministic hash (multiprocessing-safe)
+        operator_str = metadata.get("operator_type", "")
+        operator_hash = int(hashlib.sha256(operator_str.encode('utf-8')).hexdigest()[:8], 16) % 1000
         features.extend(
             [
                 0.0,  # no line_count (expressions are single line)
@@ -366,9 +389,9 @@ def _build_graph_from_ast(
     metadata: Dict[str, Dict[str, object]] = {}
     stmt_counter = 0  # unique ID for statement nodes
 
-    # First pass: Extract all functions
+    # First pass: Extract all functions (including async functions)
     for node in ast.walk(code_ast):
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             node_lookup[node.name] = node
             facts = _collect_function_facts(node, source_code)
             metadata[node.name] = facts
@@ -450,7 +473,7 @@ def _build_graph_from_ast(
 
     # Second pass: Add statement-level nodes within each function
     for func_name, func_node in list(node_lookup.items()):
-        if not isinstance(func_node, ast.FunctionDef):
+        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
 
         add_statements_recursive(func_name, func_node.body)
@@ -589,10 +612,22 @@ def create_graph_data_from_source(
     *,
     embedder: Optional[SemanticEmbedder] = None,
 ) -> Data:
-    """Produce graph data directly from source text."""
+    """Produce graph data directly from source text (supports multiple languages)."""
 
-    code_ast = ast.parse(source_code)
-    return create_graph_data_from_ast(code_ast, source_code, embedder=embedder)
+    try:
+        # Try Python AST first (fastest path)
+        code_ast = ast.parse(source_code)
+        return create_graph_data_from_ast(code_ast, source_code, embedder=embedder)
+    except SyntaxError:
+        # Fall back to multi-language parser using tree-sitter
+        from .multilang_parser import convert_to_python_ast_style
+
+        try:
+            code_ast = convert_to_python_ast_style(source_code)
+            return create_graph_data_from_ast(code_ast, source_code, embedder=embedder)
+        except Exception as e:
+            # Re-raise with more context
+            raise RuntimeError(f"Failed to parse code with both Python AST and tree-sitter: {e}") from e
 
 
 def create_graph_data_object(
