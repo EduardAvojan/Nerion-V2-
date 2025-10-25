@@ -37,7 +37,7 @@ Nerion learns the "physics" of code quality using Graph Neural Networks, generat
 
 ### 🧠 Deep Learning Brain
 - **Graph Neural Networks (GNN)** - Understands code as interconnected graphs, capturing structural patterns that traditional tools miss
-- **Continuously evolving intelligence** - Trains on real-world code patterns using advanced GraphSAGE architecture
+- **State-of-the-art architectures** - Leverages cutting-edge GNN models (GraphSAGE, GCN, GAT, GIN) for superior code comprehension
 - **Self-improving curriculum** - Autonomously generates and validates its own training lessons across multiple difficulty levels
 - **Production-grade learning** - Learns from thousands of real bug fixes spanning beginner mistakes to expert-level vulnerabilities
 
