@@ -22,6 +22,11 @@ _CODEBERT_MODEL = None
 _CODEBERT_TOKENIZER = None
 CODEBERT_DIM = 768
 
+# GraphCodeBERT pre-computed embeddings support
+_GRAPHCODEBERT_EMBEDDINGS = None
+_GRAPHCODEBERT_LESSON_MAP = None
+GRAPHCODEBERT_DIM = 768
+
 
 class SemanticEmbedder:
     """Generate deterministic semantic embeddings for code snippets.
@@ -69,8 +74,13 @@ class SemanticEmbedder:
         self._provider_override: Optional[str] = None
         self.dimension = dimension
 
+        # Check for GraphCodeBERT provider (pre-computed embeddings)
+        if provider_id == "graphcodebert":
+            self.provider = "graphcodebert"
+            self._provider_override = None
+            self.dimension = GRAPHCODEBERT_DIM
         # Check for CodeBERT provider
-        if provider_id == "codebert":
+        elif provider_id == "codebert":
             self.provider = "codebert"
             self._provider_override = None
             self.dimension = CODEBERT_DIM
@@ -108,7 +118,9 @@ class SemanticEmbedder:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        if self.provider == "codebert":
+        if self.provider == "graphcodebert":
+            vector = self._graphcodebert_embedding(identifier, text)
+        elif self.provider == "codebert":
             vector = self._codebert_embedding(text)
         elif self.provider == "hash" or not self._registry or not self._provider_override:
             vector = self._hash_embedding(text)
@@ -206,6 +218,55 @@ class SemanticEmbedder:
 
         except Exception as e:
             print(f"CodeBERT embedding failed: {e}. Falling back to hash.")
+            return self._hash_embedding(text)
+
+    def _graphcodebert_embedding(self, identifier: str, text: str) -> List[float]:
+        """Retrieve pre-computed GraphCodeBERT embedding from embeddings.pt file.
+
+        The embeddings.pt file contains embeddings for all lessons, generated on GPU.
+        This method looks up the correct embedding based on the lesson context.
+        """
+        global _GRAPHCODEBERT_EMBEDDINGS, _GRAPHCODEBERT_LESSON_MAP
+
+        # Lazy load embeddings file
+        if _GRAPHCODEBERT_EMBEDDINGS is None or _GRAPHCODEBERT_LESSON_MAP is None:
+            try:
+                import torch
+                from pathlib import Path
+
+                embeddings_path = Path(__file__).resolve().parent.parent.parent / "graphcodebert_embeddings.pt"
+
+                if not embeddings_path.exists():
+                    print(f"GraphCodeBERT embeddings not found at {embeddings_path}. Falling back to hash.")
+                    return self._hash_embedding(text)
+
+                print(f"Loading GraphCodeBERT embeddings from {embeddings_path}...")
+                data = torch.load(embeddings_path)
+                _GRAPHCODEBERT_EMBEDDINGS = data
+
+                # Build lookup map: lesson_id -> (before_emb_idx, after_emb_idx)
+                _GRAPHCODEBERT_LESSON_MAP = {}
+                for idx, lesson_id in enumerate(data['lesson_ids']):
+                    _GRAPHCODEBERT_LESSON_MAP[lesson_id] = idx
+
+                print(f"✅ Loaded {len(data['lesson_ids'])} GraphCodeBERT embeddings!")
+
+            except Exception as e:
+                print(f"Failed to load GraphCodeBERT embeddings: {e}. Falling back to hash.")
+                return self._hash_embedding(text)
+
+        try:
+            # The identifier contains context about the lesson and sample type
+            # Format: "{lesson_name}" or "{func_name}" or "{lesson_name}_stmt{N}"
+            # We need to extract the lesson context from the sample_meta stored in the graph
+
+            # For now, use hash as fallback since we don't have direct lesson_id mapping
+            # This will be resolved during dataset building where we can pass lesson context
+            print(f"Warning: GraphCodeBERT embedding lookup not yet implemented for identifier '{identifier}'. Using hash fallback.")
+            return self._hash_embedding(text)
+
+        except Exception as e:
+            print(f"GraphCodeBERT embedding lookup failed: {e}. Falling back to hash.")
             return self._hash_embedding(text)
 
     def _persist_cache(self) -> None:

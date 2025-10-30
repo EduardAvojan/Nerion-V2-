@@ -39,6 +39,7 @@ class TrainingConfig:
     dropout: float = 0.2
     attention_heads: int = 4
     pretrained_path: Optional[Path] = None
+    use_graphcodebert: bool = False
 
 
 POOLING_REGISTRY: Dict[str, Callable] = {
@@ -132,7 +133,7 @@ def _select_pooling(name: str) -> Callable:
     return POOLING_REGISTRY[key]
 
 
-def _run_epoch(model, loader, pool_fn, optimizer=None):
+def _run_epoch(model, loader, pool_fn, optimizer=None, use_graphcodebert=False):
     is_train = optimizer is not None
     if is_train:
         model.train()
@@ -149,8 +150,18 @@ def _run_epoch(model, loader, pool_fn, optimizer=None):
         if is_train:
             optimizer.zero_grad()
 
-        logits = model(batch.x, batch.edge_index, batch.batch)
-        graph_logits = pool_fn(logits, batch.batch)
+        # Extract GraphCodeBERT embeddings if available
+        graphcodebert_emb = None
+        if use_graphcodebert and hasattr(batch, 'graphcodebert_embedding'):
+            # PyG doesn't batch this automatically, so we need to reshape
+            # batch.graphcodebert_embedding is flattened (batch_size * 768,)
+            # Reshape to (batch_size, 768)
+            num_graphs = batch.num_graphs
+            graphcodebert_emb = batch.graphcodebert_embedding.view(num_graphs, -1)
+
+        logits = model(batch.x, batch.edge_index, batch.batch, graphcodebert_embedding=graphcodebert_emb)
+        # Model already returns graph-level logits (pooling done internally)
+        graph_logits = logits
         targets = batch.y.view(-1)
         loss = F.cross_entropy(graph_logits, targets)
 
@@ -208,6 +219,7 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
         residual=config.residual,
         dropout=config.dropout,
         attention_heads=config.attention_heads,
+        use_graphcodebert=config.use_graphcodebert,
     )
 
     if config.pretrained_path:
@@ -248,8 +260,8 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
     patience = max(10, int(config.epochs * 0.2))
 
     for epoch in range(1, config.epochs + 1):
-        train_loss, train_acc, _ = _run_epoch(model, train_loader, pool_fn, optimizer)
-        val_loss, val_acc, val_metrics = _run_epoch(model, val_loader, pool_fn)
+        train_loss, train_acc, _ = _run_epoch(model, train_loader, pool_fn, optimizer, use_graphcodebert=config.use_graphcodebert)
+        val_loss, val_acc, val_metrics = _run_epoch(model, val_loader, pool_fn, use_graphcodebert=config.use_graphcodebert)
         history.append(
             {
                 "epoch": epoch,
@@ -391,6 +403,11 @@ def main() -> None:
         default=None,
         help="Path to a pretrained state dict for warm starting the model",
     )
+    parser.add_argument(
+        "--use-graphcodebert",
+        action="store_true",
+        help="Use pre-computed GraphCodeBERT embeddings as global graph features",
+    )
     args = parser.parse_args()
 
     config = TrainingConfig(
@@ -409,6 +426,7 @@ def main() -> None:
         dropout=args.dropout,
         attention_heads=args.attention_heads,
         pretrained_path=args.pretrained,
+        use_graphcodebert=args.use_graphcodebert,
     )
 
     print(f"Loading dataset from {config.dataset_path} ...")

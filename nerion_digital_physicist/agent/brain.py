@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Callable
 
+import torch
 import torch.nn.functional as F
 from torch import nn
-from torch_geometric.nn import GATConv, GCNConv, GINConv, SAGEConv
+from torch_geometric.nn import GATConv, GCNConv, GINConv, SAGEConv, global_mean_pool
 
 
 class _StackedGraphModel(nn.Module):
@@ -28,6 +29,7 @@ class _StackedGraphModel(nn.Module):
         residual: bool = False,
         dropout: float = 0.2,
         use_batch_norm: bool = True,
+        use_graphcodebert: bool = False,
     ) -> None:
         super().__init__()
         if num_layers < 1:
@@ -35,6 +37,7 @@ class _StackedGraphModel(nn.Module):
 
         self.residual = residual
         self.dropout = float(dropout)
+        self.use_graphcodebert = use_graphcodebert
 
         layers = []
         norms = []
@@ -47,14 +50,20 @@ class _StackedGraphModel(nn.Module):
 
         self.layers = nn.ModuleList(layers)
         self.norms = nn.ModuleList(norms) if norms else None
+
+        # If using GraphCodeBERT, concatenate it with pooled graph features
+        head_input_dim = hidden_channels
+        if use_graphcodebert:
+            head_input_dim = hidden_channels + 768  # 768 is GraphCodeBERT dimension
+
         self.head = nn.Sequential(
-            nn.Linear(hidden_channels, hidden_channels),
+            nn.Linear(head_input_dim, hidden_channels),
             nn.ReLU(),
             nn.Dropout(p=self.dropout),
             nn.Linear(hidden_channels, num_classes),
         )
 
-    def forward(self, x, edge_index, batch, *, use_dropout: bool = False):  # noqa: D401 - PyG style signature
+    def forward(self, x, edge_index, batch, *, use_dropout: bool = False, graphcodebert_embedding=None):  # noqa: D401 - PyG style signature
         features = x
         for idx, conv in enumerate(self.layers):
             out = conv(features, edge_index)
@@ -66,7 +75,17 @@ class _StackedGraphModel(nn.Module):
             # The `use_dropout` flag allows forcing dropout even in eval mode.
             out = F.dropout(out, p=self.dropout, training=self.training or use_dropout)
             features = out
-        return self.head(features)
+
+        # Global pooling for graph-level prediction
+        pooled_features = global_mean_pool(features, batch)
+
+        # Concatenate GraphCodeBERT embedding if available
+        if self.use_graphcodebert and graphcodebert_embedding is not None:
+            # graphcodebert_embedding shape: (batch_size, 768)
+            combined_features = torch.cat([pooled_features, graphcodebert_embedding], dim=1)
+            return self.head(combined_features)
+        else:
+            return self.head(pooled_features)
 
 
 def _make_mlp(in_channels: int, hidden_channels: int) -> nn.Sequential:
@@ -90,6 +109,7 @@ class CodeGraphGCN(_StackedGraphModel):
         num_layers: int = 4,
         residual: bool = False,
         dropout: float = 0.2,
+        use_graphcodebert: bool = False,
     ) -> None:
         super().__init__(
             lambda in_ch, out_ch: GCNConv(in_ch, out_ch),
@@ -100,6 +120,7 @@ class CodeGraphGCN(_StackedGraphModel):
             residual=residual,
             dropout=dropout,
             use_batch_norm=True,
+            use_graphcodebert=use_graphcodebert,
         )
 
 
@@ -115,6 +136,7 @@ class CodeGraphSAGE(_StackedGraphModel):
         num_layers: int = 4,
         residual: bool = False,
         dropout: float = 0.2,
+        use_graphcodebert: bool = False,
     ) -> None:
         super().__init__(
             lambda in_ch, out_ch: SAGEConv(in_ch, out_ch),
@@ -125,6 +147,7 @@ class CodeGraphSAGE(_StackedGraphModel):
             residual=residual,
             dropout=dropout,
             use_batch_norm=True,
+            use_graphcodebert=use_graphcodebert,
         )
 
 
@@ -140,6 +163,7 @@ class CodeGraphGIN(_StackedGraphModel):
         num_layers: int = 4,
         residual: bool = False,
         dropout: float = 0.2,
+        use_graphcodebert: bool = False,
     ) -> None:
         super().__init__(
             lambda in_ch, out_ch: GINConv(_make_mlp(in_ch, out_ch)),
@@ -150,6 +174,7 @@ class CodeGraphGIN(_StackedGraphModel):
             residual=residual,
             dropout=dropout,
             use_batch_norm=True,
+            use_graphcodebert=use_graphcodebert,
         )
 
 
@@ -166,6 +191,7 @@ class CodeGraphGAT(_StackedGraphModel):
         residual: bool = False,
         dropout: float = 0.2,
         heads: int = 4,
+        use_graphcodebert: bool = False,
     ) -> None:
 
         def _conv(in_ch: int, out_ch: int) -> nn.Module:
@@ -186,6 +212,7 @@ class CodeGraphGAT(_StackedGraphModel):
             residual=residual,
             dropout=dropout,
             use_batch_norm=True,
+            use_graphcodebert=use_graphcodebert,
         )
 
 
@@ -207,6 +234,7 @@ def build_gnn(
     residual: bool = False,
     dropout: float = 0.2,
     attention_heads: int = 4,
+    use_graphcodebert: bool = False,
 ) -> nn.Module:
     """Return the requested GNN architecture."""
 
@@ -221,6 +249,7 @@ def build_gnn(
         "num_layers": num_layers,
         "residual": residual,
         "dropout": dropout,
+        "use_graphcodebert": use_graphcodebert,
     }
     if key == "gat":
         kwargs["heads"] = attention_heads

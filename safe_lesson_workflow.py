@@ -73,13 +73,32 @@ def prepare_workspace():
     conn = sqlite3.connect(WORKSPACE_DB)
     cursor = conn.cursor()
     workspace_count = cursor.execute("SELECT COUNT(*) FROM lessons").fetchone()[0]
+
+    # Export existing lesson names for duplicate checking
+    existing_names = {row[0] for row in cursor.execute("SELECT name FROM lessons").fetchall()}
     conn.close()
 
     if workspace_count != initial_count:
         raise ValueError(f"❌ FATAL: Copy verification failed! Expected {initial_count}, got {workspace_count}")
 
+    # Write existing names to file for agents to check
+    with open('/tmp/existing_names.txt', 'w') as f:
+        for name in sorted(existing_names):
+            f.write(f"{name}\n")
+
     print(f"✅ Workspace ready with {workspace_count} existing lessons")
+    print(f"✅ Exported {len(existing_names)} lesson names to /tmp/existing_names.txt")
     print(f"✅ Agents can now check for duplicates before generating")
+    print()
+    print("=" * 70)
+    print("⚠️  AGENTS MUST load existing names before generating:")
+    print("=" * 70)
+    print("with open('/tmp/existing_names.txt', 'r') as f:")
+    print("    existing_names = {line.strip() for line in f}")
+    print()
+    print("def is_duplicate(name):")
+    print("    return name in existing_names")
+    print("=" * 70)
     print()
     print("=" * 70)
     print("NOW: Activate agents to generate lessons")
@@ -144,6 +163,27 @@ def review_lessons():
     if new_count == 0:
         print("⚠️  No new lessons to review!")
         return True
+
+    # Check for duplicate names WITHIN new lessons
+    new_lesson_names = [lesson[0] for lesson in new_lessons]
+    name_counts = {}
+    for name in new_lesson_names:
+        name_counts[name] = name_counts.get(name, 0) + 1
+
+    duplicates_within_new = {name: count for name, count in name_counts.items() if count > 1}
+
+    if duplicates_within_new:
+        print("=" * 70)
+        print("❌ CRITICAL: DUPLICATE NAMES FOUND IN NEW LESSONS!")
+        print("=" * 70)
+        for name, count in duplicates_within_new.items():
+            print(f"   {name}: appears {count} times")
+        print()
+        print("This should NEVER happen! The agent failed duplicate checking!")
+        print("You must delete duplicate lessons from workspace before merging.")
+        print("=" * 70)
+        print()
+        return False
 
     # Quality checks
     print("🔍 Running quality checks...")
