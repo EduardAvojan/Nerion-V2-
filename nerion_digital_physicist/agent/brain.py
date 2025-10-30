@@ -84,6 +84,12 @@ class _StackedGraphModel(nn.Module):
             # graphcodebert_embedding shape: (batch_size, 768)
             combined_features = torch.cat([pooled_features, graphcodebert_embedding], dim=1)
             return self.head(combined_features)
+        elif self.use_graphcodebert:
+            # If use_graphcodebert is True but embedding is missing, pad with zeros
+            batch_size = pooled_features.size(0)
+            zero_embedding = torch.zeros(batch_size, 768, device=pooled_features.device)
+            combined_features = torch.cat([pooled_features, zero_embedding], dim=1)
+            return self.head(combined_features)
         else:
             return self.head(pooled_features)
 
