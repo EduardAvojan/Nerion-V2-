@@ -311,7 +311,8 @@ class TestChainOfThought:
         assert result is not None
         assert len(result.reasoning_chain) == 6, "Should have 6 reasoning steps"
         assert result.overall_confidence > 0
-        assert result.decision in ['proceed', 'needs_clarification', 'reject']
+        # Decision is either the proposed change or ABORT message
+        assert result.decision == proposed_change or result.decision.startswith("ABORT")
         assert result.user_explanation
 
 
@@ -381,8 +382,8 @@ def calculate_price(quantity, discount):
         result = analyzer.analyze_code(test_code)
 
         assert result is not None
-        assert result.causal_graph is not None
-        assert len(result.causal_graph.nodes) > 0
+        assert result.graph is not None
+        assert len(result.graph.nodes) > 0
 
     def test_root_cause_identification(self):
         """Test root cause identification"""
@@ -412,28 +413,26 @@ class TestEpisodicMemory:
     """Test episodic memory system"""
 
     def test_priority_sampling(self):
-        """Test priority-based sampling"""
-        from selfcoder.memory.episodic_memory import EpisodicMemory
-        from nerion_digital_physicist.infrastructure.memory import Experience
+        """Test priority-based sampling with ReplayStore"""
+        from nerion_digital_physicist.infrastructure.memory import ReplayStore, Experience
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            storage_path = Path(tmpdir) / "memory.jsonl"
+            storage_path = Path(tmpdir)
 
-            memory = EpisodicMemory(storage_path)
+            replay_store = ReplayStore(storage_path)
 
-            # Add test memories
+            # Add test experiences
             for i in range(10):
-                exp = Experience(
-                    experience_id=f"exp_{i}",
+                replay_store.append(
                     task_id=f"task_{i}",
                     template_id="test",
                     status="solved",
-                    metadata={'priority': i % 3}  # 0, 1, or 2
+                    priority=float(i % 3),  # 0, 1, or 2
+                    metadata={'test_data': True}
                 )
-                memory.add(exp)
 
             # Sample with priority
-            samples = memory.sample(k=5, strategy='priority')
+            samples = replay_store.sample(k=5, strategy='priority')
 
             assert len(samples) <= 5
             assert all(isinstance(s, Experience) for s in samples)
@@ -444,7 +443,8 @@ class TestModelRegistry:
 
     def test_model_versioning(self):
         """Test model version management"""
-        from nerion_digital_physicist.learning.model_registry import ModelRegistry
+        from nerion_digital_physicist.deployment.model_registry import ModelRegistry
+        from nerion_digital_physicist.agent.brain import build_gnn
 
         with tempfile.TemporaryDirectory() as tmpdir:
             registry_path = Path(tmpdir) / "registry"
@@ -452,18 +452,25 @@ class TestModelRegistry:
 
             registry = ModelRegistry(registry_path)
 
-            # Register a model
-            model_path = Path(tmpdir) / "model.pt"
-            torch.save({'dummy': 'state'}, model_path)
-
-            version = registry.register_model(
-                model_path=model_path,
-                metrics={'accuracy': 0.75},
-                is_production=False
+            # Create a dummy model
+            model = build_gnn(
+                architecture='sage',
+                num_node_features=768,
+                hidden_channels=256,
+                num_classes=2
             )
 
-            assert version is not None
-            assert '.' in version  # Should be semantic version
+            # Register the model
+            model_version = registry.register(
+                model=model,
+                validation_accuracy=0.75,
+                old_task_accuracy=0.70,
+                architecture='sage'
+            )
+
+            assert model_version is not None
+            assert '.' in model_version.version  # Should be semantic version
+            assert model_version.validation_accuracy == 0.75
 
 
 # Integration test for full learning cycle

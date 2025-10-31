@@ -62,10 +62,12 @@ class Episode:
 
     # Action
     action_taken: str
-    reasoning: Optional[str] = None
 
     # Outcome
     code_after: str
+
+    # Optional fields with defaults
+    reasoning: Optional[str] = None
     outcome: EpisodeOutcome = EpisodeOutcome.SUCCESS
     test_results: Optional[Dict[str, Any]] = None
 
