@@ -63,6 +63,10 @@ class NerionImmuneDaemon:
         self.server = None
         self.socket_path = os.path.expanduser('~/.nerion/daemon.sock')
 
+        # Continuous Learning System (initialized lazily)
+        self.continuous_learner = None
+        self._learner_initialized = False
+
         logger.info(f"Nerion Immune Daemon initialized")
         logger.info(f"Monitoring codebase: {self.codebase_path}")
 
@@ -230,6 +234,36 @@ class NerionImmuneDaemon:
                 logger.error(f"Codebase watcher error: {e}")
                 await asyncio.sleep(10)
 
+    def _init_continuous_learner(self):
+        """Initialize continuous learner (lazy initialization)"""
+        if self._learner_initialized:
+            return
+
+        try:
+            from daemon.continuous_learner import ContinuousLearner
+
+            # Initialize paths relative to codebase
+            replay_root = self.codebase_path / "data" / "replay"
+            curriculum_path = self.codebase_path / "out" / "learning" / "curriculum.sqlite"
+            model_registry_path = self.codebase_path / "out" / "models" / "registry"
+
+            # Ensure directories exist
+            replay_root.mkdir(parents=True, exist_ok=True)
+            model_registry_path.mkdir(parents=True, exist_ok=True)
+
+            self.continuous_learner = ContinuousLearner(
+                replay_root=replay_root,
+                curriculum_path=curriculum_path,
+                model_registry_path=model_registry_path
+            )
+
+            self._learner_initialized = True
+            logger.info("✅ Continuous learner initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize continuous learner: {e}", exc_info=True)
+            self.continuous_learner = None
+
     async def train_gnn_background(self):
         """
         Run GNN training in background.
@@ -240,16 +274,43 @@ class NerionImmuneDaemon:
         while self.running:
             try:
                 if self.gnn_training:
-                    # TODO: Actual GNN training
-                    # This would call your existing GNN training code
-                    self.gnn_episodes += 1
-                    logger.debug(f"GNN training episode {self.gnn_episodes}")
+                    # Initialize learner if needed
+                    if not self._learner_initialized:
+                        self._init_continuous_learner()
 
-                await asyncio.sleep(30)  # Train every 30 seconds when active
+                    # Run learning cycle if learner is available
+                    if self.continuous_learner:
+                        try:
+                            logger.info(f"Starting learning cycle (episode {self.gnn_episodes + 1})...")
+                            updated = await self.continuous_learner.learning_cycle()
+
+                            if updated:
+                                self.gnn_episodes += 1
+                                logger.info(f"✅ Learning cycle complete (episode {self.gnn_episodes})")
+
+                                # Broadcast update to clients
+                                await self.broadcast_to_clients({
+                                    'type': 'training_update',
+                                    'data': {
+                                        'episode': self.gnn_episodes,
+                                        'status': 'completed',
+                                        'timestamp': datetime.now().isoformat()
+                                    }
+                                })
+                            else:
+                                logger.info("Learning cycle completed, no model update")
+
+                        except Exception as e:
+                            logger.error(f"Learning cycle error: {e}", exc_info=True)
+                    else:
+                        logger.warning("Continuous learner not available, skipping cycle")
+
+                # Run every hour when training is active
+                await asyncio.sleep(3600)
 
             except Exception as e:
-                logger.error(f"GNN training error: {e}")
-                await asyncio.sleep(10)
+                logger.error(f"GNN training error: {e}", exc_info=True)
+                await asyncio.sleep(600)  # Wait 10 minutes on error
 
     async def monitor_health(self):
         """
