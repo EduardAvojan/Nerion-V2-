@@ -135,6 +135,18 @@ experiments/datasets/
 experiments/runs/
 /out/training_runs/
 
+# CodeNet dataset (14M files, 50GB uncompressed)
+Project_CodeNet/
+ibm_data.sqlite
+
+# GNN model weights and datasets
+*.pt
+*.pth
+digital_physicist_brain.meta.json
+
+# Colab notebooks (temporary/experimental)
+colab_*.ipynb
+
 # Temporary analysis scripts
 analyze_*.py
 scan_*.py
@@ -146,6 +158,8 @@ targeted_*.py
 display_*.py
 audit_*.py
 generate_massive_*.py
+scripts/local_replay_runner.py
+scripts/staging_curriculum.py
 
 # Temporary analysis reports
 *_ANALYSIS.md

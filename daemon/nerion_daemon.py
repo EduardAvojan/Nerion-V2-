@@ -67,6 +67,19 @@ class NerionImmuneDaemon:
         self.continuous_learner = None
         self._learner_initialized = False
 
+        # Curiosity-Driven Exploration Engine
+        self.curiosity_engine = None
+        self.semantic_embedder = None
+        self._curiosity_initialized = False
+
+        # Multi-Agent System
+        self.coordinator = None
+        self._agents_initialized = False
+
+        # Discovery tracking
+        self.patterns_discovered = 0
+        self.code_issues_found = []
+
         logger.info(f"Nerion Immune Daemon initialized")
         logger.info(f"Monitoring codebase: {self.codebase_path}")
 
@@ -204,35 +217,112 @@ class NerionImmuneDaemon:
             'last_scan': self.last_scan,
             'gnn_training': self.gnn_training,
             'gnn_episodes': self.gnn_episodes,
-            'clients_connected': len(self.clients)
+            'clients_connected': len(self.clients),
+            # NEW: Real immune system metrics
+            'patterns_discovered': self.patterns_discovered,
+            'total_issues': len(self.code_issues_found),
+            'curiosity_enabled': self._curiosity_initialized,
+            'multi_agent_enabled': self._agents_initialized
         }
 
     async def watch_codebase(self):
         """
-        Continuously watch codebase for changes.
+        Continuously watch codebase for changes using curiosity-driven exploration.
         This is the immune system's surveillance system.
         """
         logger.info("👁️  Codebase watcher started")
 
+        # Initialize curiosity engine and multi-agent system
+        self._init_curiosity_engine()
+        self._init_multi_agent_system()
+
+        if not self._curiosity_initialized:
+            logger.warning("Curiosity engine not available, running basic monitoring")
+
         while self.running:
             try:
-                # Scan codebase
                 self.last_scan = datetime.now().isoformat()
 
-                # Count files being monitored
-                python_files = list(self.codebase_path.rglob('*.py'))
+                # Get all Python files (excluding venv, node_modules, etc)
+                python_files = []
+                for root, dirs, files in os.walk(self.codebase_path):
+                    # Filter out unwanted directories
+                    dirs[:] = [d for d in dirs if d not in [
+                        'node_modules', '__pycache__', '.git', 'venv',
+                        '.claude', '.pytest_cache', 'dist', 'build'
+                    ]]
+                    for f in files:
+                        if f.endswith('.py'):
+                            python_files.append(Path(root) / f)
+
                 self.files_monitored = len(python_files)
+                logger.info(f"🔍 Scanning {self.files_monitored} Python files...")
 
-                # TODO: Actual file watching with watchdog library
-                # For now, periodic scans
+                # Curiosity-driven analysis
+                if self.curiosity_engine and self.semantic_embedder:
+                    discoveries_this_scan = 0
 
-                logger.debug(f"Scan complete: {self.files_monitored} files monitored")
+                    # Sample files for deep analysis (avoid overwhelming on large codebases)
+                    import random
+                    sample_size = min(100, len(python_files))
+                    sampled_files = random.sample(python_files, sample_size)
 
-                await asyncio.sleep(60)  # Scan every minute
+                    for fpath in sampled_files:
+                        try:
+                            with open(fpath, 'r') as f:
+                                code = f.read()
+
+                            if len(code) < 100:  # Skip trivial files
+                                continue
+
+                            # Generate embedding
+                            embedding = self.semantic_embedder.embed('code', code)
+
+                            # Evaluate with curiosity engine
+                            candidate = self.curiosity_engine.evaluate_candidate(
+                                code=code,
+                                embedding=embedding,
+                                metadata={
+                                    'file': str(fpath),
+                                    'size': len(code),
+                                    'scan_time': self.last_scan
+                                }
+                            )
+
+                            # If interesting, add to discoveries
+                            if self.curiosity_engine.should_explore(candidate):
+                                pattern = self.curiosity_engine.add_discovered_pattern(candidate)
+                                discoveries_this_scan += 1
+                                self.patterns_discovered += 1
+
+                                logger.info(f"✨ New pattern discovered: {fpath.name}")
+
+                                # Multi-agent analysis on interesting code
+                                if self.coordinator:
+                                    await self._analyze_with_agents(code, str(fpath))
+
+                        except Exception as e:
+                            logger.debug(f"Error analyzing {fpath}: {e}")
+
+                    if discoveries_this_scan > 0:
+                        logger.info(f"📊 Discoveries this scan: {discoveries_this_scan}")
+
+                # Broadcast statistics
+                await self.broadcast_to_clients({
+                    'type': 'scan_complete',
+                    'data': {
+                        'files_scanned': self.files_monitored,
+                        'patterns_discovered': self.patterns_discovered,
+                        'timestamp': self.last_scan
+                    }
+                })
+
+                # Scan every 10 minutes (600 seconds)
+                await asyncio.sleep(600)
 
             except Exception as e:
-                logger.error(f"Codebase watcher error: {e}")
-                await asyncio.sleep(10)
+                logger.error(f"Codebase watcher error: {e}", exc_info=True)
+                await asyncio.sleep(60)
 
     def _init_continuous_learner(self):
         """Initialize continuous learner (lazy initialization)"""
@@ -263,6 +353,72 @@ class NerionImmuneDaemon:
         except Exception as e:
             logger.error(f"Failed to initialize continuous learner: {e}", exc_info=True)
             self.continuous_learner = None
+
+    def _init_curiosity_engine(self):
+        """Initialize curiosity-driven exploration engine"""
+        if self._curiosity_initialized:
+            return
+
+        try:
+            from nerion_digital_physicist.exploration import CuriosityEngine, ExplorationStrategy
+            from nerion_digital_physicist.agent.semantics import get_global_embedder
+
+            logger.info("Initializing curiosity engine...")
+
+            self.semantic_embedder = get_global_embedder()
+            self.curiosity_engine = CuriosityEngine(
+                exploration_strategy=ExplorationStrategy.ADAPTIVE,
+                novelty_threshold=0.60,
+                interest_threshold=0.55,
+                memory_size=50000
+            )
+
+            self._curiosity_initialized = True
+            logger.info("✅ Curiosity engine initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize curiosity engine: {e}", exc_info=True)
+            self.curiosity_engine = None
+
+    def _init_multi_agent_system(self):
+        """Initialize multi-agent collaboration system"""
+        if self._agents_initialized:
+            return
+
+        try:
+            from nerion_digital_physicist.agents import (
+                MultiAgentCoordinator,
+                PythonSpecialist,
+                SecuritySpecialist,
+                PerformanceSpecialist,
+                BugFixingSpecialist,
+                RefactoringSpecialist,
+                TestingSpecialist
+            )
+
+            logger.info("Initializing multi-agent system...")
+
+            self.coordinator = MultiAgentCoordinator()
+
+            # Register specialist agents
+            agents = [
+                PythonSpecialist("python-specialist-1"),
+                SecuritySpecialist("security-specialist-1"),
+                PerformanceSpecialist("performance-specialist-1"),
+                BugFixingSpecialist("bug-fixing-specialist-1"),
+                RefactoringSpecialist("refactoring-specialist-1"),
+                TestingSpecialist("testing-specialist-1")
+            ]
+
+            for agent in agents:
+                self.coordinator.register_agent(agent)
+
+            self._agents_initialized = True
+            logger.info(f"✅ Multi-agent system initialized ({len(agents)} agents)")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize multi-agent system: {e}", exc_info=True)
+            self.coordinator = None
 
     async def train_gnn_background(self):
         """
@@ -312,29 +468,90 @@ class NerionImmuneDaemon:
                 logger.error(f"GNN training error: {e}", exc_info=True)
                 await asyncio.sleep(600)  # Wait 10 minutes on error
 
+    async def _analyze_with_agents(self, code: str, filepath: str):
+        """
+        Analyze code using multi-agent system.
+
+        Args:
+            code: Code to analyze
+            filepath: Path to the file
+        """
+        if not self.coordinator:
+            return
+
+        try:
+            from nerion_digital_physicist.agents import TaskRequest
+
+            # Create analysis task
+            task = TaskRequest(
+                task_type="analyze",
+                code=code,
+                language="python",
+                requester_id="daemon",
+                metadata={'filepath': filepath}
+            )
+
+            # Coordinate analysis across specialists
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self.coordinator.coordinate_task,
+                task
+            )
+
+            # Check for issues found
+            if result and result.success:
+                issues = result.result.get('issues', [])
+                if issues:
+                    self.code_issues_found.extend(issues)
+                    self.threats_detected += len(issues)
+
+                    logger.info(f"⚠️  {len(issues)} issues found in {Path(filepath).name}")
+
+                    # Broadcast issue alert
+                    await self.broadcast_to_clients({
+                        'type': 'issues_detected',
+                        'data': {
+                            'file': filepath,
+                            'issues': issues,
+                            'timestamp': datetime.now().isoformat()
+                        }
+                    })
+
+        except Exception as e:
+            logger.error(f"Multi-agent analysis error: {e}")
+
     async def monitor_health(self):
         """
-        Monitor system health and detect threats.
+        Monitor system health and detect threats using real metrics.
         The immune system's threat detection.
         """
         logger.info("🛡️  Health monitor started")
 
         while self.running:
             try:
-                # Check for issues
-                # TODO: Actual health checks
-                # - Code quality metrics
-                # - Test coverage
-                # - Security vulnerabilities
-                # - Performance issues
+                # Calculate health score based on discovered issues
+                total_issues = len(self.code_issues_found)
+                recent_issues = sum(
+                    1 for issue in self.code_issues_found[-100:]
+                    if issue.get('severity') in ['high', 'critical']
+                )
 
-                # Update health status
-                if self.threats_detected > 10:
-                    self.health = "warning"
-                elif self.threats_detected > 50:
+                # Update health status based on real metrics
+                if recent_issues > 50:
                     self.health = "critical"
+                elif recent_issues > 20:
+                    self.health = "warning"
+                elif total_issues > 100 and recent_issues > 10:
+                    self.health = "degraded"
                 else:
                     self.health = "healthy"
+
+                # Log health summary
+                if self.health != "healthy":
+                    logger.warning(
+                        f"Health status: {self.health} "
+                        f"({total_issues} total issues, {recent_issues} recent high-severity)"
+                    )
 
                 await asyncio.sleep(120)  # Check health every 2 minutes
 

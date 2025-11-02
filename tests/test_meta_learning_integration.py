@@ -1,7 +1,7 @@
 """
-Tier 1 Integration Tests
+Meta-Learning Integration Tests
 
-Tests for critical integrations between Tier 1 components:
+Tests for critical integrations between meta-learning components:
 - Continuous Learner integration
 - Graph Loading pipeline
 - Auto-curriculum generation
