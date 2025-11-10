@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import math
+import signal
+import sys
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import torch
@@ -20,6 +22,20 @@ from torch_geometric.nn import (
 )
 
 from nerion_digital_physicist.agent.brain import build_gnn
+
+# Global flag for graceful shutdown
+_shutdown_requested = False
+
+def _signal_handler(signum, frame):
+    """Handle Ctrl+C gracefully by setting shutdown flag."""
+    global _shutdown_requested
+    if not _shutdown_requested:
+        print("\n\n⚠️  Interrupt received! Saving checkpoint and exiting gracefully...")
+        print("   (Press Ctrl+C again to force quit without saving)")
+        _shutdown_requested = True
+    else:
+        print("\n\n🛑 Force quit! Not saving checkpoint.")
+        sys.exit(1)
 
 
 @dataclass
@@ -63,6 +79,36 @@ class GraphSampleDataset(Dataset):
 
 
 def _load_samples(path: Path) -> List[object]:
+    """Load samples from single file or directory of batch files."""
+    import glob
+    import time
+
+    # If path is a directory, load all batch files
+    if path.is_dir():
+        batch_files = sorted(path.glob("*.pt"))
+        if not batch_files:
+            raise FileNotFoundError(f"No .pt files found in directory {path}")
+
+        print(f"Loading from {len(batch_files)} batch files...")
+        all_samples = []
+        start_time = time.time()
+
+        for i, batch_file in enumerate(batch_files, 1):
+            print(f"  [{i}/{len(batch_files)}] Loading {batch_file.name}...", end=" ", flush=True)
+            batch_start = time.time()
+            payload = torch.load(batch_file, weights_only=False)
+            samples = payload.get("samples")
+            if not isinstance(samples, list) or not samples:
+                raise RuntimeError(f"Batch {batch_file} does not contain valid samples")
+            all_samples.extend(samples)
+            batch_time = time.time() - batch_start
+            print(f"{len(samples):,} samples ({batch_time:.1f}s)")
+
+        total_time = time.time() - start_time
+        print(f"✓ Loaded {len(all_samples):,} total samples in {total_time:.1f}s")
+        return all_samples
+
+    # Single file loading (original behavior)
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found at {path}")
     payload = torch.load(path, weights_only=False)
@@ -134,6 +180,8 @@ def _select_pooling(name: str) -> Callable:
 
 
 def _run_epoch(model, loader, pool_fn, optimizer=None, use_graphcodebert=False):
+    import sys
+    import time
     is_train = optimizer is not None
     if is_train:
         model.train()
@@ -146,7 +194,11 @@ def _run_epoch(model, loader, pool_fn, optimizer=None, use_graphcodebert=False):
     collected_probs: List[torch.Tensor] = []
     collected_targets: List[torch.Tensor] = []
 
-    for batch in loader:
+    total_batches = len(loader)
+    print_every = 100  # Print every 100 batches
+    epoch_start_time = time.time()
+
+    for batch_idx, batch in enumerate(loader, 1):
         if is_train:
             optimizer.zero_grad()
 
@@ -159,7 +211,16 @@ def _run_epoch(model, loader, pool_fn, optimizer=None, use_graphcodebert=False):
             num_graphs = batch.num_graphs
             graphcodebert_emb = batch.graphcodebert_embedding.view(num_graphs, -1)
 
-        logits = model(batch.x, batch.edge_index, batch.batch, graphcodebert_embedding=graphcodebert_emb)
+        # Extract edge attributes if available (for edge-aware models like GAT)
+        edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
+
+        logits = model(
+            batch.x,
+            batch.edge_index,
+            batch.batch,
+            graphcodebert_embedding=graphcodebert_emb,
+            edge_attr=edge_attr
+        )
         # Model already returns graph-level logits (pooling done internally)
         graph_logits = logits
         targets = batch.y.view(-1)
@@ -178,6 +239,24 @@ def _run_epoch(model, loader, pool_fn, optimizer=None, use_graphcodebert=False):
             probs = graph_logits.softmax(dim=1)[:, 1].detach().cpu()
             collected_probs.append(probs)
             collected_targets.append(targets.detach().cpu())
+
+        # Print progress
+        if batch_idx % print_every == 0 or batch_idx == total_batches:
+            mode = "Train" if is_train else "Val"
+            current_acc = total_correct / max(total_graphs, 1)
+            current_loss = total_loss / max(total_graphs, 1)
+
+            # Calculate time estimates
+            elapsed = time.time() - epoch_start_time
+            batches_per_sec = batch_idx / elapsed
+            remaining_batches = total_batches - batch_idx
+            eta_seconds = remaining_batches / batches_per_sec if batches_per_sec > 0 else 0
+            eta_minutes = eta_seconds / 60
+
+            print(f"  [{mode}] Batch {batch_idx:,}/{total_batches:,} ({batch_idx/total_batches*100:.1f}%) | "
+                  f"Loss: {current_loss:.4f} | Acc: {current_acc:.1%} | "
+                  f"Speed: {batches_per_sec:.1f} batch/s | ETA: {eta_minutes:.1f}m",
+                  flush=True)
 
     avg_loss = total_loss / max(total_graphs, 1)
     accuracy = total_correct / max(total_graphs, 1)
@@ -202,13 +281,21 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
     torch.backends.cudnn.benchmark = False
 
     samples = _load_samples(config.dataset_path)
+
+    print(f"\n📦 Creating dataset from {len(samples):,} samples...")
     dataset = GraphSampleDataset(samples)
+    print(f"✓ Dataset created")
 
+    print(f"\n🔀 Splitting into train/val ({1-config.val_ratio:.0%}/{config.val_ratio:.0%})...")
     train_dataset, val_dataset = _split_dataset(dataset, config.val_ratio, config.seed)
+    print(f"✓ Split complete: {len(train_dataset):,} train, {len(val_dataset):,} val")
 
+    print(f"\n📊 Creating data loaders (batch size: {config.batch_size})...")
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size)
+    print(f"✓ Data loaders ready: {len(train_loader):,} train batches, {len(val_loader):,} val batches")
 
+    print(f"\n🧠 Initializing {config.architecture.upper()} model...")
     num_node_features = train_dataset[0].num_node_features  # type: ignore[index]
     model = build_gnn(
         architecture=config.architecture,
@@ -221,6 +308,9 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
         attention_heads=config.attention_heads,
         use_graphcodebert=config.use_graphcodebert,
     )
+
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"✓ Model initialized ({total_params:,} parameters)")
 
     if config.pretrained_path:
         print(f"Loading pretrained weights from {config.pretrained_path} ...")
@@ -253,6 +343,22 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
     pool_fn = _select_pooling(config.pooling)
 
+    # Register signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, _signal_handler)
+
+    # Prepare checkpoint directory
+    checkpoint_dir = _prepare_output_dir(config.output_dir)
+    checkpoint_path = checkpoint_dir / "checkpoint_latest.pt"
+    print(f"Checkpoints will be saved to: {checkpoint_dir}")
+
+    print(f"\n🚀 Starting training...")
+    print(f"   Optimizer: Adam (lr={config.learning_rate})")
+    print(f"   Pooling: {config.pooling}")
+    print(f"   Epochs: {config.epochs}")
+    print(f"   Patience: {max(10, int(config.epochs * 0.2))}")
+    print(f"   Press Ctrl+C once to save and exit gracefully")
+    print(f"\n{'='*70}")
+
     history = []
     best_snapshot: dict[str, object] | None = None
     best_val_metric = float("-inf")
@@ -260,6 +366,8 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
     patience = max(10, int(config.epochs * 0.2))
 
     for epoch in range(1, config.epochs + 1):
+        print(f"\n📈 Epoch {epoch}/{config.epochs}")
+        print(f"{'─'*70}")
         train_loss, train_acc, _ = _run_epoch(model, train_loader, pool_fn, optimizer, use_graphcodebert=config.use_graphcodebert)
         val_loss, val_acc, val_metrics = _run_epoch(model, val_loader, pool_fn, use_graphcodebert=config.use_graphcodebert)
         history.append(
@@ -273,11 +381,12 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
                 "val_f1": val_metrics.get("f1"),
             }
         )
-        if epoch % 10 == 0 or epoch == config.epochs:
-            print(
-                f"Epoch {epoch:03d}: train_loss={train_loss:.4f} "
-                f"train_acc={train_acc:.3f} val_loss={val_loss:.4f} val_acc={val_acc:.3f} "
-                f"val_auc={val_metrics.get('auc', float('nan')):.3f} "
+        # Print summary after every epoch
+        print(
+            f"\n✓ Epoch {epoch:03d} Summary: "
+            f"train_loss={train_loss:.4f} train_acc={train_acc:.1%} | "
+            f"val_loss={val_loss:.4f} val_acc={val_acc:.1%} | "
+            f"val_auc={val_metrics.get('auc', float('nan')):.3f} "
                 f"val_f1={val_metrics.get('f1', float('nan')):.3f}"
             )
 
@@ -299,6 +408,26 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
             epochs_since_improvement = 0
         else:
             epochs_since_improvement += 1
+
+        # Save checkpoint after each epoch
+        if best_snapshot is not None:
+            checkpoint = {
+                "epoch": epoch,
+                "model_state_dict": best_snapshot["state_dict"],
+                "optimizer_state_dict": optimizer.state_dict(),
+                "best_val_metric": best_val_metric,
+                "history": history,
+                "config": asdict(config),
+            }
+            torch.save(checkpoint, checkpoint_path)
+            print(f"💾 Checkpoint saved (best epoch: {best_snapshot['epoch']}, val_acc: {best_snapshot['val_accuracy']:.1%})")
+
+        # Check for graceful shutdown
+        global _shutdown_requested
+        if _shutdown_requested:
+            print(f"\n✓ Gracefully stopping at epoch {epoch}")
+            print(f"   Best model from epoch {best_snapshot['epoch']} will be saved")
+            break
 
         if epochs_since_improvement >= patience:
             print(
@@ -323,6 +452,7 @@ def train_model(config: TrainingConfig) -> Dict[str, object]:
         "num_layers": config.num_layers,
         "dropout": config.dropout,
         "attention_heads": config.attention_heads,
+        "checkpoint_dir": checkpoint_dir,
     }
 
 
@@ -432,7 +562,8 @@ def main() -> None:
     print(f"Loading dataset from {config.dataset_path} ...")
     results = train_model(config)
 
-    artifact_dir = _prepare_output_dir(config.output_dir)
+    # Use checkpoint_dir from training (already created with timestamp)
+    artifact_dir = results.get("checkpoint_dir", _prepare_output_dir(config.output_dir))
     model_path = artifact_dir / "digital_physicist_brain.pt"
     torch.save(results["model"].state_dict(), model_path)
     print(
