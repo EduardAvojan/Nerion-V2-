@@ -183,3 +183,4 @@ external_repos/
 coverage.json
 *.pid
 .genkit/
+DOGFOODING_MONITORING_GUIDE.md
