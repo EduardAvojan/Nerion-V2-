@@ -1004,6 +1004,170 @@ class CoordinatorAgent(SpecialistAgent):
         return response
 
 
+class BugFixAgent(SpecialistAgent):
+    """LLM-powered specialist for generating intelligent bug fixes using Claude API"""
+
+    def __init__(self, agent_id: str):
+        super().__init__(
+            agent_id=agent_id,
+            role=AgentRole.BUG_FIXING_SPECIALIST,
+            capabilities=[
+                AgentCapability("bug_fixing", 0.90, 2.5, 0.85),
+                AgentCapability("code_generation", 0.88, 2.8, 0.82),
+                AgentCapability("refactoring", 0.85, 2.6, 0.80),
+            ]
+        )
+
+    def can_handle(self, task: TaskRequest) -> float:
+        """Check if task is bug fixing"""
+        if 'bug' in task.task_type.lower() or 'fix' in task.task_type.lower():
+            return 0.95
+        return 0.5  # Can attempt any code task with LLM
+
+    def execute_task(self, task: TaskRequest) -> TaskResponse:
+        """Generate intelligent bug fix using Claude API"""
+        import time
+        start_time = time.time()
+
+        try:
+            # Get the buggy code
+            code = task.code
+
+            # Get bug analysis from context
+            bug_analysis = task.context.get('bug_analysis', {})
+            bug_patterns = bug_analysis.get('patterns', [])
+            bug_confidence = bug_analysis.get('confidence', 0.5)
+
+            # Build prompt for Claude
+            prompt = self._build_fix_prompt(code, bug_patterns, bug_confidence)
+
+            # Call Claude API to generate fix
+            from app.chat.providers.base import get_registry
+            registry = get_registry()
+
+            # Use Claude for intelligent code fixes
+            response = registry.generate(
+                role='code',
+                messages=[
+                    {'role': 'system', 'content': 'You are an expert code debugger. Generate clean, correct code fixes.'},
+                    {'role': 'user', 'content': prompt}
+                ],
+                temperature=0.3,  # Lower temperature for more deterministic fixes
+                max_tokens=2048
+            )
+
+            # Extract fixed code from LLM response
+            fixed_code = self._extract_code(response.text)
+
+            if not fixed_code:
+                # Write raw LLM response to file for debugging
+                import tempfile
+                debug_file = tempfile.mktemp(suffix='_claude_response.txt', prefix='nerion_bugfix_')
+                with open(debug_file, 'w') as f:
+                    f.write(response.text)
+                raise ValueError(f"LLM did not return valid code. Raw response saved to: {debug_file}")
+
+            # Prepare solution
+            solution = {
+                'code': fixed_code,
+                'rationale': self._extract_rationale(response.text),
+                'llm_model': response.model,
+                'confidence': min(0.95, bug_confidence + 0.15)  # Boost confidence with LLM fix
+            }
+
+            execution_time = time.time() - start_time
+
+            result_response = TaskResponse(
+                task_id=task.task_id,
+                success=True,
+                result={
+                    'solution': solution,
+                    'explanation': solution['rationale'],
+                    'llm_provider': response.provider,
+                    'llm_latency': response.latency_s
+                },
+                confidence=solution['confidence'],
+                execution_time=execution_time,
+                responder_id=self.agent_id
+            )
+
+        except Exception as e:
+            import traceback
+            result_response = TaskResponse(
+                task_id=task.task_id,
+                success=False,
+                result={},
+                confidence=0.0,
+                execution_time=time.time() - start_time,
+                errors=[f"LLM bug fix generation failed: {str(e)}", traceback.format_exc()],
+                responder_id=self.agent_id
+            )
+
+        self.update_metrics(result_response)
+        return result_response
+
+    def _build_fix_prompt(self, code: str, bug_patterns: List[str], confidence: float) -> str:
+        """Build prompt for Claude to generate fix"""
+        patterns_str = '\n'.join([f"- {pattern}" for pattern in bug_patterns]) if bug_patterns else "- General code quality issues detected"
+
+        return f"""You are debugging Python code. The GNN detected potential bugs with {confidence*100:.1f}% confidence.
+
+**BUGGY CODE:**
+```python
+{code}
+```
+
+**BUG ANALYSIS:**
+{patterns_str}
+
+**YOUR TASK:**
+1. Analyze the code and identify the specific bugs
+2. Generate a FIXED version of the code
+3. Explain what you fixed and why
+
+**OUTPUT FORMAT:**
+RATIONALE: [One sentence explaining what was wrong and what you fixed]
+
+FIXED_CODE:
+```python
+[Put the complete fixed code here]
+```
+
+IMPORTANT:
+- Return ONLY valid, executable Python code in FIXED_CODE block
+- Preserve all functionality, only fix bugs
+- Do not add comments unless necessary
+- Do not add new features, only fix bugs"""
+
+    def _extract_code(self, llm_response: str) -> Optional[str]:
+        """Extract code block from LLM response"""
+        # Try to find ```python code block
+        import re
+        match = re.search(r'FIXED_CODE:\s*```python\n(.*?)```', llm_response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+        # Fallback: Try any ```python block
+        match = re.search(r'```python\n(.*?)```', llm_response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+        # Fallback: Try any ``` block
+        match = re.search(r'```\n(.*?)```', llm_response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+        return None
+
+    def _extract_rationale(self, llm_response: str) -> str:
+        """Extract rationale from LLM response"""
+        import re
+        match = re.search(r'RATIONALE:\s*(.+?)(?:\n|$)', llm_response)
+        if match:
+            return match.group(1).strip()
+        return "LLM-generated bug fix"
+
+
 class GeneralistAgent(SpecialistAgent):
     """Jack-of-all-trades agent with moderate capability across all areas"""
 

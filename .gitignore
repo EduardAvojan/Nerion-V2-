@@ -71,6 +71,7 @@ Nerion.app
 .nerion/daemon.sock
 .nerion/daemon.log
 .nerion/daemon-error.log
+.nerion/reports/
 
 # Playwright cache
 .playwright-mcp/
@@ -184,3 +185,10 @@ coverage.json
 *.pid
 .genkit/
 DOGFOODING_MONITORING_GUIDE.md
+
+# Bundled model weights (too large for Git, use Git LFS or download script)
+models/graphcodebert/*.bin
+models/graphcodebert/*.safetensors
+models/graphcodebert/model.safetensors
+models/codebert/*.bin
+models/codebert/*.safetensors

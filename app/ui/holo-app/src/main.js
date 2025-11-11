@@ -314,6 +314,22 @@ function handleDaemonMessage(message) {
     if (mainWindow && mainWindow.webContents) {
       mainWindow.webContents.send('daemon-status', data);
     }
+  } else if (type === 'fix_proposal') {
+    // Forward fix proposal to renderer
+    console.log('[HOLO] Fix proposal received from daemon');
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('daemon-fix-proposal', data);
+    }
+  } else if (type === 'fix_approved' || type === 'fix_rejected') {
+    // Forward approval/rejection confirmation
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('daemon-fix-response', message);
+    }
+  } else if (type === 'pending_fixes') {
+    // Forward pending fixes list
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('daemon-pending-fixes', data);
+    }
   }
 }
 
@@ -566,6 +582,31 @@ function registerIpcHandlers() {
       console.warn('[HOLO] Failed to get shell env, spawning with default env.');
       spawnPythonBridge(); // Fallback to original behavior
     });
+  });
+
+  // Handle daemon commands (approve/reject fixes)
+  ipcMain.on('daemon-command', (_event, command) => {
+    if (!command || typeof command !== 'object') {
+      console.warn('[HOLO] Invalid daemon command:', command);
+      return;
+    }
+
+    if (!daemonSocket || !daemonSocket.writable) {
+      console.warn('[HOLO] Daemon not connected, cannot send command:', command);
+      return;
+    }
+
+    console.log('[HOLO] Sending command to daemon:', command.type);
+    const message = JSON.stringify(command) + '\n';
+    daemonSocket.write(message);
+  });
+
+  // Request pending fixes on demand
+  ipcMain.on('daemon-get-pending-fixes', () => {
+    if (daemonSocket && daemonSocket.writable) {
+      const message = JSON.stringify({ type: 'get_pending_fixes' }) + '\n';
+      daemonSocket.write(message);
+    }
   });
 }
 

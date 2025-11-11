@@ -86,13 +86,15 @@ def _process_single_lesson(
         return (None, None, f"Skipping lesson '{name}': {exc}")
 
 
-def build_before_after_graphs(lessons: Iterable[sqlite3.Row], workers: int = 8, output_file: Optional[Path] = None) -> List[Data]:
+def build_before_after_graphs(lessons: Iterable[sqlite3.Row], workers: int = 8, output_file: Optional[Path] = None, shuffle: bool = True, seed: int = 42) -> List[Data]:
     """Convert lesson rows into labelled graphs using multiprocessing.
 
     Args:
         lessons: Lesson data from database
         workers: Number of parallel workers
         output_file: If provided, saves after EVERY lesson (crash-resistant)
+        shuffle: If True, shuffle graphs to break before/after pairing (CRITICAL for proper training)
+        seed: Random seed for shuffling (for reproducibility)
     """
 
     lessons_list = list(lessons)
@@ -139,8 +141,8 @@ def build_before_after_graphs(lessons: Iterable[sqlite3.Row], workers: int = 8, 
                 status = "✓" if (before_graph or after_graph) else "✗"
                 print(f"[{i}/{total}] {status} {lesson_name[:50]:<50} | Graphs: {len(graphs)}")
 
-                # SAVE after EVERY lesson (crash-resistant)
-                if output_file and len(graphs) > 0:
+                # SAVE after EVERY lesson (crash-resistant) - but DON'T shuffle yet
+                if output_file and len(graphs) > 0 and not shuffle:
                     torch.save({"samples": graphs}, output_file)
                     print(f"          💾 Saved {len(graphs)} graphs to disk")
 
@@ -161,6 +163,19 @@ def build_before_after_graphs(lessons: Iterable[sqlite3.Row], workers: int = 8, 
 
     if not graphs:
         raise RuntimeError("No graphs could be produced from the provided lessons")
+
+    # CRITICAL: Shuffle to break before/after pairing
+    if shuffle:
+        print(f"\n🔀 Shuffling {len(graphs)} graphs to break before/after pairing (seed={seed})...")
+        import random
+        random.seed(seed)
+        random.shuffle(graphs)
+        print(f"✅ Shuffled successfully! GNN will now learn bug patterns, not version differences.")
+        
+        # Save shuffled dataset if output_file provided
+        if output_file:
+            torch.save({"samples": graphs}, output_file)
+            print(f"💾 Saved shuffled dataset to {output_file}")
 
     return graphs
 
@@ -243,7 +258,7 @@ def export_dataset(config: DatasetExportConfig) -> Dict[str, object]:
     print(f"📊 Processing {len(lessons)} lessons with {config.workers} workers\n")
 
     if config.mode == "supervised":
-        graphs = build_before_after_graphs(lessons, workers=config.workers, output_file=dataset_file)
+        graphs = build_before_after_graphs(lessons, workers=config.workers, output_file=dataset_file, shuffle=True, seed=config.seed)
         label_counts = {
             "0_before": sum(1 for g in graphs if int(g.y.item()) == 0),
             "1_after": sum(1 for g in graphs if int(g.y.item()) == 1),
@@ -264,6 +279,12 @@ def export_dataset(config: DatasetExportConfig) -> Dict[str, object]:
     print(f"\n💾 Saving {len(graphs)} graphs to {dataset_file}...")
     torch.save({"samples": graphs}, dataset_file)
     print(f"✅ Dataset saved successfully!")
+    
+    # CRITICAL WARNING about data leakage
+    print(f"\n⚠️  WARNING: This dataset has ALL graphs shuffled together.")
+    print(f"   When splitting train/val, you MUST split by LESSON, not by graph!")
+    print(f"   Otherwise you'll have data leakage (lesson_1_before in train, lesson_1_after in val)")
+    print(f"   Use: python3 fix_data_leakage.py --input {dataset_file} --output <output_dir>")
 
     manifest = {
         "name": config.dataset_name,

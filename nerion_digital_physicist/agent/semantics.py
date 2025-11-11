@@ -22,10 +22,14 @@ _CODEBERT_MODEL = None
 _CODEBERT_TOKENIZER = None
 CODEBERT_DIM = 768
 
-# GraphCodeBERT pre-computed embeddings support
+# GraphCodeBERT model support (for on-the-fly embedding generation)
+_GRAPHCODEBERT_MODEL = None
+_GRAPHCODEBERT_TOKENIZER = None
+GRAPHCODEBERT_DIM = 768
+
+# GraphCodeBERT pre-computed embeddings support (for curriculum lessons)
 _GRAPHCODEBERT_EMBEDDINGS = None
 _GRAPHCODEBERT_LESSON_MAP = None
-GRAPHCODEBERT_DIM = 768
 
 
 class SemanticEmbedder:
@@ -68,7 +72,9 @@ class SemanticEmbedder:
         if not timeout_value or timeout_value <= 0:
             timeout_value = DEFAULT_TIMEOUT
         self.timeout = float(timeout_value)
-        provider_id = provider or os.getenv("NERION_SEMANTIC_PROVIDER", "hash")
+        # Default to GraphCodeBERT for 768-dim embeddings (required by trained 91.8% GNN model)
+        # Can be overridden via NERION_SEMANTIC_PROVIDER environment variable
+        provider_id = provider or os.getenv("NERION_SEMANTIC_PROVIDER", "graphcodebert")
         provider_id = provider_id.strip().lower()
         self._registry: Optional[ProviderRegistry] = None
         self._provider_override: Optional[str] = None
@@ -221,52 +227,65 @@ class SemanticEmbedder:
             return self._hash_embedding(text)
 
     def _graphcodebert_embedding(self, identifier: str, text: str) -> List[float]:
-        """Retrieve pre-computed GraphCodeBERT embedding from embeddings.pt file.
+        """Generate GraphCodeBERT embedding for code snippet.
 
-        The embeddings.pt file contains embeddings for all lessons, generated on GPU.
-        This method looks up the correct embedding based on the lesson context.
+        Loads microsoft/graphcodebert-base model from bundled weights and generates
+        embeddings on-the-fly for any code. This is required for the 91.8% GNN model.
         """
-        global _GRAPHCODEBERT_EMBEDDINGS, _GRAPHCODEBERT_LESSON_MAP
+        global _GRAPHCODEBERT_MODEL, _GRAPHCODEBERT_TOKENIZER
 
-        # Lazy load embeddings file
-        if _GRAPHCODEBERT_EMBEDDINGS is None or _GRAPHCODEBERT_LESSON_MAP is None:
+        # Lazy load GraphCodeBERT model
+        if _GRAPHCODEBERT_MODEL is None or _GRAPHCODEBERT_TOKENIZER is None:
             try:
+                from transformers import AutoTokenizer, AutoModel
                 import torch
-                from pathlib import Path
 
-                embeddings_path = Path(__file__).resolve().parent.parent.parent / "graphcodebert_embeddings.pt"
+                # Path to bundled model weights (local, no internet needed)
+                bundled_model_path = Path(__file__).resolve().parent.parent.parent / "models" / "graphcodebert"
 
-                if not embeddings_path.exists():
-                    print(f"GraphCodeBERT embeddings not found at {embeddings_path}. Falling back to hash.")
-                    return self._hash_embedding(text)
+                if bundled_model_path.exists():
+                    print(f"Loading GraphCodeBERT from bundled weights: {bundled_model_path}")
+                    _GRAPHCODEBERT_TOKENIZER = AutoTokenizer.from_pretrained(str(bundled_model_path))
+                    _GRAPHCODEBERT_MODEL = AutoModel.from_pretrained(str(bundled_model_path))
+                else:
+                    # Fallback: Download from HuggingFace (first-time only)
+                    print("Bundled GraphCodeBERT not found. Downloading from microsoft/graphcodebert-base...")
+                    print("(This is a one-time download. Bundle weights for offline use.)")
+                    _GRAPHCODEBERT_TOKENIZER = AutoTokenizer.from_pretrained("microsoft/graphcodebert-base")
+                    _GRAPHCODEBERT_MODEL = AutoModel.from_pretrained("microsoft/graphcodebert-base")
 
-                print(f"Loading GraphCodeBERT embeddings from {embeddings_path}...")
-                data = torch.load(embeddings_path)
-                _GRAPHCODEBERT_EMBEDDINGS = data
-
-                # Build lookup map: lesson_id -> (before_emb_idx, after_emb_idx)
-                _GRAPHCODEBERT_LESSON_MAP = {}
-                for idx, lesson_id in enumerate(data['lesson_ids']):
-                    _GRAPHCODEBERT_LESSON_MAP[lesson_id] = idx
-
-                print(f"✅ Loaded {len(data['lesson_ids'])} GraphCodeBERT embeddings!")
-
+                _GRAPHCODEBERT_MODEL.eval()  # Set to evaluation mode
+                print("✅ GraphCodeBERT model loaded successfully!")
             except Exception as e:
-                print(f"Failed to load GraphCodeBERT embeddings: {e}. Falling back to hash.")
+                print(f"Failed to load GraphCodeBERT: {e}. Falling back to hash embedding.")
                 return self._hash_embedding(text)
 
         try:
-            # The identifier contains context about the lesson and sample type
-            # Format: "{lesson_name}" or "{func_name}" or "{lesson_name}_stmt{N}"
-            # We need to extract the lesson context from the sample_meta stored in the graph
+            import torch
 
-            # For now, use hash as fallback since we don't have direct lesson_id mapping
-            # This will be resolved during dataset building where we can pass lesson context
-            print(f"Warning: GraphCodeBERT embedding lookup not yet implemented for identifier '{identifier}'. Using hash fallback.")
-            return self._hash_embedding(text)
+            # Truncate text if too long (max 512 tokens for GraphCodeBERT)
+            text = text[:2000]  # Rough character limit
+
+            # Tokenize and encode
+            inputs = _GRAPHCODEBERT_TOKENIZER(
+                text,
+                return_tensors="pt",
+                max_length=512,
+                truncation=True,
+                padding="max_length"
+            )
+
+            # Generate embedding (mean pool over tokens)
+            with torch.no_grad():
+                outputs = _GRAPHCODEBERT_MODEL(**inputs)
+                # Use [CLS] token embedding (first token) - same as CodeBERT
+                embedding = outputs.last_hidden_state[:, 0, :].squeeze()
+                vector = embedding.tolist()
+
+            return [float(v) for v in vector]
 
         except Exception as e:
-            print(f"GraphCodeBERT embedding lookup failed: {e}. Falling back to hash.")
+            print(f"GraphCodeBERT embedding failed: {e}. Falling back to hash.")
             return self._hash_embedding(text)
 
     def _persist_cache(self) -> None:

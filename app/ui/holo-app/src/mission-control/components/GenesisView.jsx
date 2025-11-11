@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import FixApprovalPanel from './FixApprovalPanel'
 import './GenesisView.css'
 
 export default function GenesisView() {
@@ -15,11 +16,7 @@ export default function GenesisView() {
     { id: 2, name: 'Performance optimization', status: 'analyzing', progress: 100 },
     { id: 3, name: 'Memory efficiency test', status: 'queued', progress: 0 }
   ])
-  const [pendingApprovals, setPendingApprovals] = useState([
-    { id: 1, file: 'llm_router.py', action: 'Apply caching strategy', impact: 'medium', risk: 'low', type: 'optimization' },
-    { id: 2, file: 'scoring.py', action: 'Refactor scoring patterns', impact: 'low', risk: 'low', type: 'refactor' },
-    { id: 3, file: 'auth.py', action: 'Add rate limiting', impact: 'high', risk: 'medium', type: 'security' }
-  ])
+  // Removed mock pendingApprovals - now using real FixApprovalPanel component
   const [learningTimeline, setLearningTimeline] = useState([])
   const [stats, setStats] = useState({
     activeExperiments: 3,
@@ -150,21 +147,7 @@ export default function GenesisView() {
     setInputValue('')
   }
 
-  const handleApprove = (id) => {
-    setPendingApprovals(prev => prev.filter(item => item.id !== id))
-    setMessages(prev => [...prev, {
-      role: 'assistant',
-      text: `✓ Modification approved! Applying changes...`
-    }])
-  }
-
-  const handleReject = (id) => {
-    setPendingApprovals(prev => prev.filter(item => item.id !== id))
-    setMessages(prev => [...prev, {
-      role: 'assistant',
-      text: `✗ Modification rejected. Exploring alternative approaches...`
-    }])
-  }
+  // Removed handleApprove/handleReject - now handled by FixApprovalPanel
 
   const getPhaseIcon = (phaseName) => {
     const icons = {
@@ -286,47 +269,8 @@ export default function GenesisView() {
             </div>
           </div>
 
-          {/* Pending Approvals */}
-          {pendingApprovals.length > 0 && (
-            <div className="status-card approvals-card">
-              <h4>📋 Pending Approvals</h4>
-              <div className="approvals-list">
-                {pendingApprovals.map(approval => (
-                  <div key={approval.id} className="approval-item">
-                    <div className="approval-header">
-                      <span className="approval-action">{approval.action}</span>
-                      <div className="approval-badges">
-                        <span className={`approval-impact impact-${approval.impact}`}>
-                          {approval.impact}
-                        </span>
-                        <span className={`approval-risk risk-${approval.risk}`}>
-                          risk: {approval.risk}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="approval-file">{approval.file}</div>
-                    <div className="approval-actions">
-                      <button
-                        className="btn-approve"
-                        onClick={() => handleApprove(approval.id)}
-                      >
-                        ✓ Approve
-                      </button>
-                      <button
-                        className="btn-reject"
-                        onClick={() => handleReject(approval.id)}
-                      >
-                        ✗ Reject
-                      </button>
-                      <button className="btn-view">
-                        View Diff
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Real Fix Approval Panel */}
+          <FixApprovalPanel />
 
           {/* Learning Timeline */}
           <div className="status-card">

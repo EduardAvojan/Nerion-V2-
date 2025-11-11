@@ -21,9 +21,14 @@
   ],
   "author": "Nerion Team",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nerion/nerion-v2.git"
+  },
   "build": {
     "appId": "com.nerion.missioncontrol",
     "productName": "Nerion",
+    "publish": null,
     "directories": {
       "output": "build"
     },
