@@ -48,9 +48,15 @@ function App() {
     recent: []
   })
 
+  const [trainingStatus, setTrainingStatus] = useState({
+    file: '',
+    status: 'idle', // idle, running, passed, failed
+    lastUpdate: null
+  })
+
   // Connect to events WebSocket
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8000/api/events')
+    const ws = new WebSocket('ws://localhost:8000/api/events?token=nerion-dev-key-local-only')
 
     ws.onopen = () => {
       console.log('[Events] Connected')
@@ -69,6 +75,16 @@ function App() {
           break
         case 'memory_update':
           setMemory(prev => ({ ...prev, ...data.data }))
+          break
+        case 'memory_update':
+          setMemory(prev => ({ ...prev, ...data.data }))
+          break
+        case 'scanning_test':
+          setTrainingStatus({
+            file: data.data.file,
+            status: data.data.status,
+            lastUpdate: new Date().toLocaleTimeString()
+          })
           break
         // Add more event handlers as needed
       }
@@ -173,6 +189,7 @@ function App() {
       <TrainingDashboard
         isOpen={trainingOpen}
         onClose={() => setTrainingOpen(false)}
+        liveStatus={trainingStatus}
       />
     </div>
   )

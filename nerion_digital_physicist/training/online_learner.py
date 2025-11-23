@@ -114,7 +114,7 @@ class OnlineLearner:
 
         Args:
             model: Model to compute Fisher for
-            data_loader: Data to estimate Fisher from
+            data_loader: Data to estimate Fisher from (PyG DataLoader)
 
         Returns:
             Dictionary mapping parameter name to Fisher diagonal
@@ -129,23 +129,33 @@ class OnlineLearner:
 
         # Accumulate gradients squared
         num_samples = 0
-        for batch_idx, (graphs, labels) in enumerate(data_loader):
+        for batch_idx, batch in enumerate(data_loader):
             if batch_idx >= self.config.fisher_samples // self.config.batch_size:
                 break
 
             model.zero_grad()
+            batch = batch.to(self.device)
 
             # Forward pass
-            logits = []
-            for graph in graphs:
-                logit = model(graph.to(self.device))
-                logits.append(logit)
-            logits = torch.stack(logits)
-            labels = labels.to(self.device)
+            # Extract GraphCodeBERT embeddings if available
+            graphcodebert_emb = None
+            if hasattr(batch, 'graphcodebert_embedding'):
+                num_graphs = batch.num_graphs
+                graphcodebert_emb = batch.graphcodebert_embedding.view(num_graphs, -1)
+            
+            edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
 
+            logits = model(
+                batch.x,
+                batch.edge_index,
+                batch.batch,
+                graphcodebert_embedding=graphcodebert_emb,
+                edge_attr=edge_attr
+            )
+            
             # Sample from model's distribution (not ground truth)
             predictions = F.softmax(logits, dim=1)
-            sampled_labels = torch.multinomial(predictions, 1).squeeze()
+            sampled_labels = torch.multinomial(predictions, 1).view(-1)
 
             # Compute log likelihood
             loss = F.cross_entropy(logits, sampled_labels)
@@ -156,11 +166,11 @@ class OnlineLearner:
                 if param.requires_grad and param.grad is not None:
                     fisher[name] += param.grad.data.pow(2)
 
-            num_samples += len(graphs)
+            num_samples += batch.num_graphs
 
         # Average over samples
         for name in fisher:
-            fisher[name] /= num_samples
+            fisher[name] /= max(1, num_samples)
 
         return fisher
 
@@ -274,12 +284,25 @@ class OnlineLearner:
         else:
             mixed_data = new_data
 
-        # Create data loader
-        dataset = torch.utils.data.TensorDataset(
-            torch.arange(len(mixed_data))  # Placeholder indices
-        )
-        data_loader = torch.utils.data.DataLoader(
-            dataset,
+        # Prepare PyG Data objects
+        from torch_geometric.loader import DataLoader
+        from torch_geometric.data import Data
+        
+        processed_data = []
+        for graph, label in mixed_data:
+            # Ensure graph is a Data object and has y
+            if not isinstance(graph, Data):
+                # Fallback if graph is not Data (should not happen with current setup)
+                continue
+            
+            # Clone to avoid modifying original
+            data = graph.clone()
+            data.y = torch.tensor([label], dtype=torch.long)
+            processed_data.append(data)
+
+        # Create PyG data loader
+        data_loader = DataLoader(
+            processed_data,
             batch_size=self.config.batch_size,
             shuffle=True
         )
@@ -293,20 +316,28 @@ class OnlineLearner:
             epoch_task_loss = 0.0
             epoch_ewc_loss = 0.0
 
-            for batch_indices in data_loader:
+            for batch in data_loader:
+                batch = batch.to(self.device)
                 optimizer.zero_grad()
 
-                # Get batch data
-                batch_data = [mixed_data[i] for i in batch_indices[0]]
-                graphs, labels = zip(*batch_data)
+                # Forward pass with correct signature
+                # Extract GraphCodeBERT embeddings if available
+                graphcodebert_emb = None
+                if hasattr(batch, 'graphcodebert_embedding'):
+                    num_graphs = batch.num_graphs
+                    graphcodebert_emb = batch.graphcodebert_embedding.view(num_graphs, -1)
+                
+                edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
 
-                # Forward pass
-                logits = []
-                for graph in graphs:
-                    logit = model(graph.to(self.device))
-                    logits.append(logit)
-                logits = torch.stack(logits)
-                labels = torch.tensor(labels, dtype=torch.long, device=self.device)
+                logits = model(
+                    batch.x,
+                    batch.edge_index,
+                    batch.batch,
+                    graphcodebert_embedding=graphcodebert_emb,
+                    edge_attr=edge_attr
+                )
+                
+                labels = batch.y.view(-1)
 
                 # Task loss
                 task_loss = F.cross_entropy(logits, labels)
@@ -377,13 +408,35 @@ class OnlineLearner:
         model.eval()
         correct = 0
         total = 0
+        
+        # Create PyG loader
+        data_loader = self._create_data_loader(data)
 
         with torch.no_grad():
-            for graph, label in data:
-                logit = model(graph.to(self.device))
-                prediction = logit.argmax(dim=0).item()
-                correct += (prediction == label)
-                total += 1
+            for batch in data_loader:
+                batch = batch.to(self.device)
+                
+                # Extract GraphCodeBERT embeddings if available
+                graphcodebert_emb = None
+                if hasattr(batch, 'graphcodebert_embedding'):
+                    num_graphs = batch.num_graphs
+                    graphcodebert_emb = batch.graphcodebert_embedding.view(num_graphs, -1)
+                
+                edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
+
+                logits = model(
+                    batch.x,
+                    batch.edge_index,
+                    batch.batch,
+                    graphcodebert_embedding=graphcodebert_emb,
+                    edge_attr=edge_attr
+                )
+                
+                predictions = logits.argmax(dim=1)
+                labels = batch.y.view(-1)
+                
+                correct += (predictions == labels).sum().item()
+                total += labels.size(0)
 
         return correct / total if total > 0 else 0.0
 
@@ -391,12 +444,20 @@ class OnlineLearner:
         self,
         data: List[Tuple[Any, int]]
     ) -> torch.utils.data.DataLoader:
-        """Create data loader from (graph, label) list"""
-        dataset = torch.utils.data.TensorDataset(
-            torch.arange(len(data))
-        )
-        return torch.utils.data.DataLoader(
-            dataset,
+        """Create PyG data loader from (graph, label) list"""
+        from torch_geometric.loader import DataLoader
+        from torch_geometric.data import Data
+        
+        processed_data = []
+        for graph, label in data:
+            if not isinstance(graph, Data):
+                continue
+            d = graph.clone()
+            d.y = torch.tensor([label], dtype=torch.long)
+            processed_data.append(d)
+            
+        return DataLoader(
+            processed_data,
             batch_size=self.config.batch_size,
             shuffle=False
         )

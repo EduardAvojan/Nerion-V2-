@@ -1,0 +1,6 @@
+2025-11-22 12:29:51,560 - INFO - ============================================================
+2025-11-22 12:29:51,560 - INFO - 🤖 AUTONOMOUS TEST FIXER - Real Execution
+2025-11-22 12:29:51,560 - INFO - ============================================================
+2025-11-22 12:29:51,560 - INFO - 🔍 Running pytest on tests/digital_physicist/agent/test_brain.py
+2025-11-22 12:29:56,948 - INFO - Found 0 failures
+2025-11-22 12:29:56,948 - INFO - ✅ All tests passing!

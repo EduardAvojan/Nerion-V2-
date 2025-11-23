@@ -121,36 +121,58 @@ class MAMLTrainer:
             lr=self.config.inner_lr
         )
 
+        # Create loader for support set
+        support_loader = self._create_loader(task.support_graphs, task.support_labels)
+
         # Adapt on support set
         adapted_model.train()
+        final_loss = 0.0
+        
         for step in range(self.config.inner_steps):
-            # Forward pass on support set
-            support_logits = []
-            for graph in task.support_graphs:
-                logits = adapted_model(graph.to(self.device))
-                support_logits.append(logits)
+            step_loss = 0.0
+            num_batches = 0
+            
+            for batch in support_loader:
+                batch = batch.to(self.device)
+                
+                # Forward pass
+                # Extract GraphCodeBERT embeddings if available
+                graphcodebert_emb = None
+                if hasattr(batch, 'graphcodebert_embedding'):
+                    num_graphs = batch.num_graphs
+                    graphcodebert_emb = batch.graphcodebert_embedding.view(num_graphs, -1)
+                
+                edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
 
-            support_logits = torch.stack(support_logits)
-            support_labels = torch.tensor(
-                task.support_labels,
-                dtype=torch.long,
-                device=self.device
-            )
+                logits = adapted_model(
+                    batch.x,
+                    batch.edge_index,
+                    batch.batch,
+                    graphcodebert_embedding=graphcodebert_emb,
+                    edge_attr=edge_attr
+                )
+                
+                labels = batch.y.view(-1)
 
-            # Compute loss and adapt
-            loss = F.cross_entropy(support_logits, support_labels)
-            inner_optimizer.zero_grad()
-            loss.backward()
+                # Compute loss and adapt
+                loss = F.cross_entropy(logits, labels)
+                inner_optimizer.zero_grad()
+                loss.backward()
 
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(
-                adapted_model.parameters(),
-                self.config.grad_clip
-            )
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(
+                    adapted_model.parameters(),
+                    self.config.grad_clip
+                )
 
-            inner_optimizer.step()
+                inner_optimizer.step()
+                
+                step_loss += loss.item()
+                num_batches += 1
+            
+            final_loss = step_loss / max(1, num_batches)
 
-        return adapted_model, loss.item()
+        return adapted_model, final_loss
 
     def outer_loop_step(
         self,
@@ -183,27 +205,48 @@ class MAMLTrainer:
 
             # Evaluate on query set
             adapted_model.eval()
+            
+            # Create loader for query set
+            query_loader = self._create_loader(task.query_graphs, task.query_labels)
+            
             with torch.set_grad_enabled(not self.config.first_order):
-                query_logits = []
-                for graph in task.query_graphs:
-                    logits = adapted_model(graph.to(self.device))
-                    query_logits.append(logits)
+                task_loss = 0.0
+                num_batches = 0
+                
+                for batch in query_loader:
+                    batch = batch.to(self.device)
+                    
+                    # Forward pass
+                    graphcodebert_emb = None
+                    if hasattr(batch, 'graphcodebert_embedding'):
+                        num_graphs = batch.num_graphs
+                        graphcodebert_emb = batch.graphcodebert_embedding.view(num_graphs, -1)
+                    
+                    edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
 
-                query_logits = torch.stack(query_logits)
-                query_labels = torch.tensor(
-                    task.query_labels,
-                    dtype=torch.long,
-                    device=self.device
-                )
+                    logits = adapted_model(
+                        batch.x,
+                        batch.edge_index,
+                        batch.batch,
+                        graphcodebert_embedding=graphcodebert_emb,
+                        edge_attr=edge_attr
+                    )
+                    
+                    labels = batch.y.view(-1)
 
-                # Compute query loss (meta-objective)
-                task_loss = F.cross_entropy(query_logits, query_labels)
+                    # Compute query loss (meta-objective)
+                    loss = F.cross_entropy(logits, labels)
+                    task_loss += loss
+
+                    # Track accuracy
+                    predictions = logits.argmax(dim=1)
+                    meta_correct += (predictions == labels).sum().item()
+                    meta_total += labels.size(0)
+                    num_batches += 1
+                
+                # Average loss over batches if needed, but usually query set is small enough for one batch
+                # Here we sum losses for backprop
                 meta_loss += task_loss
-
-                # Track accuracy
-                predictions = query_logits.argmax(dim=1)
-                meta_correct += (predictions == query_labels).sum().item()
-                meta_total += len(query_labels)
 
         # Average across tasks
         meta_loss = meta_loss / len(tasks)
@@ -218,6 +261,27 @@ class MAMLTrainer:
         self.meta_optimizer.step()
 
         return meta_loss.item(), meta_accuracy
+
+    def _create_loader(self, graphs: List[Any], labels: List[int]) -> Any:
+        """Create PyG DataLoader from graphs and labels"""
+        from torch_geometric.loader import DataLoader
+        from torch_geometric.data import Data
+        
+        processed_data = []
+        for graph, label in zip(graphs, labels):
+            if not isinstance(graph, Data):
+                continue
+            d = graph.clone()
+            d.y = torch.tensor([label], dtype=torch.long)
+            processed_data.append(d)
+            
+        # Use a batch size large enough to hold all support/query examples if possible
+        # or default to something reasonable like 32
+        return DataLoader(
+            processed_data,
+            batch_size=32,
+            shuffle=True
+        )
 
     def meta_train(
         self,
@@ -304,22 +368,32 @@ class MAMLTrainer:
                 adapted_model, _ = self.inner_loop(task, self.meta_model)
                 adapted_model.eval()
 
-                # Evaluate on query set
-                query_logits = []
-                for graph in task.query_graphs:
-                    logits = adapted_model(graph.to(self.device))
-                    query_logits.append(logits)
+                # Create loader for query set
+                query_loader = self._create_loader(task.query_graphs, task.query_labels)
+                
+                for batch in query_loader:
+                    batch = batch.to(self.device)
+                    
+                    # Forward pass
+                    graphcodebert_emb = None
+                    if hasattr(batch, 'graphcodebert_embedding'):
+                        num_graphs = batch.num_graphs
+                        graphcodebert_emb = batch.graphcodebert_embedding.view(num_graphs, -1)
+                    
+                    edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
 
-                query_logits = torch.stack(query_logits)
-                query_labels = torch.tensor(
-                    task.query_labels,
-                    dtype=torch.long,
-                    device=self.device
-                )
-
-                predictions = query_logits.argmax(dim=1)
-                total_correct += (predictions == query_labels).sum().item()
-                total_examples += len(query_labels)
+                    logits = adapted_model(
+                        batch.x,
+                        batch.edge_index,
+                        batch.batch,
+                        graphcodebert_embedding=graphcodebert_emb,
+                        edge_attr=edge_attr
+                    )
+                    
+                    labels = batch.y.view(-1)
+                    predictions = logits.argmax(dim=1)
+                    total_correct += (predictions == labels).sum().item()
+                    total_examples += labels.size(0)
 
         return total_correct / total_examples if total_examples > 0 else 0.0
 

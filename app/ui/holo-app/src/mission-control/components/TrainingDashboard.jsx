@@ -128,6 +128,26 @@ export default function TrainingDashboard({ isOpen, onClose }) {
     ]
   })
 
+  const [isTraining, setIsTraining] = useState(false)
+
+  const handleStartTraining = async () => {
+    try {
+      await fetch('/api/control/start_autonomy', { method: 'POST' })
+      setIsTraining(true)
+    } catch (err) {
+      console.error('Failed to start autonomy:', err)
+    }
+  }
+
+  const handleStopTraining = async () => {
+    try {
+      await fetch('/api/control/stop_autonomy', { method: 'POST' })
+      setIsTraining(false)
+    } catch (err) {
+      console.error('Failed to stop autonomy:', err)
+    }
+  }
+
   useEffect(() => {
     if (isOpen) {
       // Fetch real training data from backend
@@ -136,6 +156,9 @@ export default function TrainingDashboard({ isOpen, onClose }) {
         .then(data => {
           if (data.training_data) {
             setTrainingData(prev => ({ ...prev, ...data.training_data }))
+          }
+          if (data.autonomous_testing !== undefined) {
+            setIsTraining(data.autonomous_testing)
           }
         })
         .catch(err => console.error('Failed to fetch training data:', err))
@@ -166,7 +189,7 @@ export default function TrainingDashboard({ isOpen, onClose }) {
           </div>
           <button className="close-btn" onClick={onClose}>
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M15 5L5 15M5 5L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <path d="M15 5L5 15M5 5L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
         </div>
@@ -209,118 +232,118 @@ export default function TrainingDashboard({ isOpen, onClose }) {
         <div className="training-content">
           {activeTab === 'overview' && (
             <>
-          {/* Surprise - Hero Metric */}
-          <div className="hero-metric">
-            <div className="hero-label">Current Surprise</div>
-            <div className="hero-value" style={{ color: surpriseInfo.color }}>
-              {trainingData.surprise.toFixed(3)}
-            </div>
-            <div className="hero-status" style={{ color: surpriseInfo.color }}>
-              {surpriseInfo.label}
-            </div>
-            <div className="surprise-bar">
-              <div
-                className={`surprise-fill ${surpriseInfo.level}`}
-                style={{ width: `${trainingData.surprise * 100}%` }}
-              />
-            </div>
-            <div className="surprise-scale">
-              <div className="scale-segment">
-                <div className="scale-marker confident" />
-                <span>0.0 - 0.2</span>
+              {/* Surprise - Hero Metric */}
+              <div className="hero-metric">
+                <div className="hero-label">Current Surprise</div>
+                <div className="hero-value" style={{ color: surpriseInfo.color }}>
+                  {trainingData.surprise.toFixed(3)}
+                </div>
+                <div className="hero-status" style={{ color: surpriseInfo.color }}>
+                  {surpriseInfo.label}
+                </div>
+                <div className="surprise-bar">
+                  <div
+                    className={`surprise-fill ${surpriseInfo.level}`}
+                    style={{ width: `${trainingData.surprise * 100}%` }}
+                  />
+                </div>
+                <div className="surprise-scale">
+                  <div className="scale-segment">
+                    <div className="scale-marker confident" />
+                    <span>0.0 - 0.2</span>
+                  </div>
+                  <div className="scale-segment">
+                    <div className="scale-marker learning" />
+                    <span>0.2 - 0.4</span>
+                  </div>
+                  <div className="scale-segment">
+                    <div className="scale-marker surprised" />
+                    <span>0.4 - 0.6</span>
+                  </div>
+                  <div className="scale-segment">
+                    <div className="scale-marker very-surprised" />
+                    <span>0.6+</span>
+                  </div>
+                </div>
               </div>
-              <div className="scale-segment">
-                <div className="scale-marker learning" />
-                <span>0.2 - 0.4</span>
-              </div>
-              <div className="scale-segment">
-                <div className="scale-marker surprised" />
-                <span>0.4 - 0.6</span>
-              </div>
-              <div className="scale-segment">
-                <div className="scale-marker very-surprised" />
-                <span>0.6+</span>
-              </div>
-            </div>
-          </div>
 
-          {/* Core Metrics Grid */}
-          <div className="metrics-grid">
-            {/* Policy Mode */}
-            <div className="metric-card">
-              <div className="metric-header">
-                <span className="metric-label">Policy Mode</span>
-              </div>
-              <div className="metric-value">{trainingData.policyMode}</div>
-            </div>
+              {/* Core Metrics Grid */}
+              <div className="metrics-grid">
+                {/* Policy Mode */}
+                <div className="metric-card">
+                  <div className="metric-header">
+                    <span className="metric-label">Policy Mode</span>
+                  </div>
+                  <div className="metric-value">{trainingData.policyMode}</div>
+                </div>
 
-            {/* Success Rate */}
-            <div className="metric-card">
-              <div className="metric-header">
-                <span className="metric-label">Success Rate</span>
-              </div>
-              <div className="metric-value">{successPercent}%</div>
-              <div className="metric-bar">
-                <div className="metric-bar-fill" style={{ width: `${successPercent}%` }} />
-              </div>
-            </div>
+                {/* Success Rate */}
+                <div className="metric-card">
+                  <div className="metric-header">
+                    <span className="metric-label">Success Rate</span>
+                  </div>
+                  <div className="metric-value">{successPercent}%</div>
+                  <div className="metric-bar">
+                    <div className="metric-bar-fill" style={{ width: `${successPercent}%` }} />
+                  </div>
+                </div>
 
-            {/* Uncertainty */}
-            <div className="metric-card">
-              <div className="metric-header">
-                <span className="metric-label">Uncertainty</span>
-                <span className="metric-hint">Model confidence</span>
-              </div>
-              <div className="metric-value">{trainingData.uncertainty.toFixed(3)}</div>
-            </div>
+                {/* Uncertainty */}
+                <div className="metric-card">
+                  <div className="metric-header">
+                    <span className="metric-label">Uncertainty</span>
+                    <span className="metric-hint">Model confidence</span>
+                  </div>
+                  <div className="metric-value">{trainingData.uncertainty.toFixed(3)}</div>
+                </div>
 
-            {/* Epsilon */}
-            <div className="metric-card">
-              <div className="metric-header">
-                <span className="metric-label">Epsilon (ε)</span>
-                <span className="metric-hint">Exploration rate</span>
-              </div>
-              <div className="metric-value">{trainingData.epsilon.toFixed(3)}</div>
-            </div>
+                {/* Epsilon */}
+                <div className="metric-card">
+                  <div className="metric-header">
+                    <span className="metric-label">Epsilon (ε)</span>
+                    <span className="metric-hint">Exploration rate</span>
+                  </div>
+                  <div className="metric-value">{trainingData.epsilon.toFixed(3)}</div>
+                </div>
 
-            {/* Entropy */}
-            <div className="metric-card">
-              <div className="metric-header">
-                <span className="metric-label">Entropy</span>
-                <span className="metric-hint">Decision diversity</span>
-              </div>
-              <div className="metric-value">{trainingData.entropy.toFixed(2)}</div>
-            </div>
+                {/* Entropy */}
+                <div className="metric-card">
+                  <div className="metric-header">
+                    <span className="metric-label">Entropy</span>
+                    <span className="metric-hint">Decision diversity</span>
+                  </div>
+                  <div className="metric-value">{trainingData.entropy.toFixed(2)}</div>
+                </div>
 
-            {/* Memory Size */}
-            <div className="metric-card">
-              <div className="metric-header">
-                <span className="metric-label">Memory Size</span>
-                <span className="metric-hint">Experience buffer</span>
+                {/* Memory Size */}
+                <div className="metric-card">
+                  <div className="metric-header">
+                    <span className="metric-label">Memory Size</span>
+                    <span className="metric-hint">Experience buffer</span>
+                  </div>
+                  <div className="metric-value">{trainingData.memorySize.toLocaleString()}</div>
+                </div>
               </div>
-              <div className="metric-value">{trainingData.memorySize.toLocaleString()}</div>
-            </div>
-          </div>
 
-          {/* Statistics */}
-          <div className="stats-section">
-            <div className="stats-card">
-              <div className="stat-label">Total Tasks</div>
-              <div className="stat-value">{trainingData.totalTasks.toLocaleString()}</div>
-            </div>
-            <div className="stats-card">
-              <div className="stat-label">Current Episode</div>
-              <div className="stat-value">{trainingData.currentEpisode.toLocaleString()}</div>
-            </div>
-            <div className="stats-card">
-              <div className="stat-label">Avg Surprise</div>
-              <div className="stat-value">{trainingData.avgSurprise.toFixed(3)}</div>
-            </div>
-            <div className="stats-card">
-              <div className="stat-label">Avg Duration</div>
-              <div className="stat-value">{trainingData.avgDuration.toFixed(1)}s</div>
-            </div>
-          </div>
+              {/* Statistics */}
+              <div className="stats-section">
+                <div className="stats-card">
+                  <div className="stat-label">Total Tasks</div>
+                  <div className="stat-value">{trainingData.totalTasks.toLocaleString()}</div>
+                </div>
+                <div className="stats-card">
+                  <div className="stat-label">Current Episode</div>
+                  <div className="stat-value">{trainingData.currentEpisode.toLocaleString()}</div>
+                </div>
+                <div className="stats-card">
+                  <div className="stat-label">Avg Surprise</div>
+                  <div className="stat-value">{trainingData.avgSurprise.toFixed(3)}</div>
+                </div>
+                <div className="stats-card">
+                  <div className="stat-label">Avg Duration</div>
+                  <div className="stat-value">{trainingData.avgDuration.toFixed(1)}s</div>
+                </div>
+              </div>
             </>
           )}
 
@@ -639,8 +662,15 @@ export default function TrainingDashboard({ isOpen, onClose }) {
 
         {/* Footer */}
         <div className="training-footer">
-          <button className="btn-action secondary">Pause Training</button>
-          <button className="btn-action primary">Start Training</button>
+          {isTraining ? (
+            <button className="btn-action secondary" onClick={handleStopTraining}>
+              Pause Autonomous Testing
+            </button>
+          ) : (
+            <button className="btn-action primary" onClick={handleStartTraining}>
+              Start Autonomous Testing
+            </button>
+          )}
           <button className="btn-action secondary">Export Metrics</button>
         </div>
       </div>

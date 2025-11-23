@@ -49,6 +49,7 @@ from daemon.continuous_learner import ContinuousLearner, ContinuousLearningConfi
 from nerion_digital_physicist.infrastructure.production_collector import (
     ProductionFeedbackCollector, ProductionBug
 )
+from nerion_digital_physicist.autonomous_test_fixer import AutonomousTestFixer
 
 # Self-Modification Engine
 # Removed: from selfcoder.orchestration import apply_plan (no longer needed - writing files directly)
@@ -128,6 +129,11 @@ class NerionImmuneDaemon:
         self.bugs_healed = 0
         self.healing_successes = 0
         self.healing_failures = 0
+        
+        # Autonomous Test Fixer
+        self.test_fixer = None
+        self._fixer_initialized = False
+        self.autonomous_testing_enabled = False  # Controlled by GUI
 
         # Pending fixes queue for user approval
         self.pending_fixes: Dict[str, Dict[str, Any]] = {}  # fix_id -> fix_proposal
@@ -162,6 +168,7 @@ class NerionImmuneDaemon:
         tasks = [
             asyncio.create_task(self.watch_codebase()),
             asyncio.create_task(self.train_gnn_background()),
+            asyncio.create_task(self.run_test_autonomy()),  # New autonomous testing loop
             asyncio.create_task(self.monitor_health()),
             asyncio.create_task(self.broadcast_status()),
         ]
@@ -222,8 +229,12 @@ class NerionImmuneDaemon:
         finally:
             logger.info(f"GUI disconnected: {addr}")
             self.clients.discard(writer)
-            writer.close()
-            await writer.wait_closed()
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except (BrokenPipeError, ConnectionResetError, Exception):
+                # Connection already closed or lost, ignore
+                pass
 
     async def handle_command(self, writer: asyncio.StreamWriter, message: dict):
         """Handle command from GUI"""
@@ -244,6 +255,16 @@ class NerionImmuneDaemon:
 
         elif cmd_type == 'stop_training':
             self.gnn_training = False
+            
+        elif cmd_type == 'start_autonomous_testing':
+            self.autonomous_testing_enabled = True
+            await self.send_to_client(writer, {
+                'type': 'testing_started',
+                'data': {'status': 'testing'}
+            })
+            
+        elif cmd_type == 'stop_autonomous_testing':
+            self.autonomous_testing_enabled = False
 
         elif cmd_type == 'approve_fix':
             # User approved a fix
@@ -328,7 +349,12 @@ class NerionImmuneDaemon:
             'patterns_discovered': self.patterns_discovered,
             'total_issues': len(self.code_issues_found),
             'curiosity_enabled': self._curiosity_initialized,
-            'multi_agent_enabled': self._agents_initialized
+            'multi_agent_enabled': self._agents_initialized,
+            # Test Fixer Metrics
+            'autonomous_testing': self.autonomous_testing_enabled,
+            'test_fixes_applied': len(self.test_fixer.fixes_applied) if self.test_fixer else 0,
+            'learning_examples': len(self.test_fixer.learning_examples) if self.test_fixer else 0,
+            'fixer_model_loaded': bool(self.test_fixer and self.test_fixer.model)
         }
 
     async def watch_codebase(self):
@@ -449,6 +475,86 @@ class NerionImmuneDaemon:
             except Exception as e:
                 logger.error(f"Codebase watcher error: {e}", exc_info=True)
                 await asyncio.sleep(60)
+
+    async def run_test_autonomy(self):
+        """
+        Continuously run tests and fix failures using AutonomousTestFixer.
+        This is the 'Active' immune response.
+        """
+        logger.info("🧪 Autonomous Test Fixer loop started")
+        
+        self._init_test_fixer()
+        
+        while self.running:
+            try:
+                if self.autonomous_testing_enabled and self.test_fixer:
+                    # Find all test files
+                    test_files = []
+                    for root, _, files in os.walk(self.codebase_path / "tests"):
+                        for f in files:
+                            if f.startswith("test_") and f.endswith(".py"):
+                                test_files.append(os.path.join(root, f))
+                    
+                    if test_files:
+                        import random
+                        # Pick a random test file to check (simulating continuous patrol)
+                        target_test = random.choice(test_files)
+                        logger.info(f"🧪 [Autonomy] Checking test: {Path(target_test).name}")
+                        
+                        # Broadcast scanning start
+                        await self.broadcast_to_clients({
+                            'type': 'scanning_test',
+                            'data': {
+                                'file': Path(target_test).name,
+                                'status': 'running'
+                            }
+                        })
+
+                        # Run fixer in thread pool to avoid blocking event loop
+                        result = await asyncio.get_event_loop().run_in_executor(
+                            None, 
+                            self.test_fixer.run, 
+                            target_test
+                        )
+                        
+                        # Broadcast result
+                        await self.broadcast_to_clients({
+                            'type': 'scanning_test',
+                            'data': {
+                                'file': Path(target_test).name,
+                                'status': 'passed' if result else 'failed'
+                            }
+                        })
+                        
+                        # Broadcast update if fixes were applied
+                        if self.test_fixer.fixes_applied:
+                            await self.broadcast_to_clients({
+                                'type': 'fix_applied',
+                                'data': {
+                                    'file': Path(target_test).name,
+                                    'total_fixes': len(self.test_fixer.fixes_applied)
+                                }
+                            })
+                
+                # Sleep between checks (1 minute if enabled, 5 seconds if disabled)
+                await asyncio.sleep(60 if self.autonomous_testing_enabled else 5)
+                
+            except Exception as e:
+                logger.error(f"Test autonomy error: {e}", exc_info=True)
+                await asyncio.sleep(60)
+
+    def _init_test_fixer(self):
+        """Initialize the Autonomous Test Fixer"""
+        if self._fixer_initialized:
+            return
+            
+        try:
+            logger.info("🔧 Initializing Autonomous Test Fixer...")
+            self.test_fixer = AutonomousTestFixer(enable_learning=True)
+            self._fixer_initialized = True
+            logger.info("✅ Autonomous Test Fixer initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Test Fixer: {e}", exc_info=True)
 
     def _init_continuous_learner(self):
         """Initialize continuous learner (lazy initialization)"""
