@@ -122,12 +122,20 @@ class UniversalFixer:
         file_path = script_path
         line_num = 0
         
+        # Check for SyntaxError which might not have "Traceback" header
+        is_syntax_error = "SyntaxError:" in stderr or "IndentationError:" in stderr
+        
         in_traceback = False
         for line in lines:
             if "Traceback (most recent call last):" in line:
                 in_traceback = True
                 traceback_lines = [line]
                 continue
+            
+            # If it's a syntax error, we treat the whole output as relevant
+            if is_syntax_error and line.strip().startswith("File "):
+                in_traceback = True
+                traceback_lines.append(line)
             
             if in_traceback:
                 traceback_lines.append(line)
@@ -146,16 +154,24 @@ class UniversalFixer:
                 
                 # The last line usually contains the Error Type and Message
                 if not line.startswith(" ") and ":" in line:
-                    error_type, error_msg = line.split(":", 1)
-                    error_type = error_type.strip()
-                    error_msg = error_msg.strip()
+                    parts = line.split(":", 1)
+                    if len(parts) == 2:
+                        possible_type = parts[0].strip()
+                        if "Error" in possible_type or "Exception" in possible_type:
+                            error_type = possible_type
+                            error_msg = parts[1].strip()
         
-        if in_traceback:
+        if in_traceback or is_syntax_error:
+            # If we didn't find a specific error type but know it failed, default to Runtime Error
+            if error_type == "Unknown" and is_syntax_error:
+                error_type = "SyntaxError"
+                error_msg = "Syntax or Indentation Error detected"
+                
             errors.append(ExecutionError(
                 file_path=file_path,
                 line_num=line_num,
                 error_msg=f"{error_type}: {error_msg}",
-                traceback="\n".join(traceback_lines),
+                traceback="\n".join(traceback_lines) if traceback_lines else stderr,
                 error_type=error_type
             ))
             
@@ -543,6 +559,26 @@ Return ONLY the optimized Python code."""
 
     def _evolve_quality(self, target_path: str) -> bool:
         """Vector 2: Code Quality & Refactoring"""
+        target_path_obj = Path(target_path)
+        if target_path_obj.is_dir():
+            # Pick a random python file that isn't a test and not in excluded dirs
+            excluded_dirs = {".git", ".venv", "venv", "env", "__pycache__", "node_modules", "tmp", "temp", "build", "dist"}
+            
+            candidates = []
+            for p in target_path_obj.rglob("*.py"):
+                # Check if any part of the path is in excluded_dirs
+                if any(part in excluded_dirs for part in p.parts):
+                    continue
+                if "test" in p.name:
+                    continue
+                candidates.append(str(p))
+                
+            if not candidates:
+                logger.warning("No suitable Python files found for evolution.")
+                return False
+            import random
+            target_path = random.choice(candidates)
+            
         logger.info("=" * 60)
         logger.info(f"🧬 EVOLVER (QUALITY) - Target: {target_path}")
         logger.info("=" * 60)
