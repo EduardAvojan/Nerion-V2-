@@ -73,8 +73,13 @@ class UniversalFixer:
                 self.enable_learning = False
         
     def detect_errors(self, target_path: str) -> List[ExecutionError]:
-        """Step 1: Run the target (script or test) and detect failures"""
+        """Step 1: Run the target (script, test file, or directory) and detect failures"""
         target_path_obj = Path(target_path)
+        
+        # If it's a directory, assume it's a test suite and run pytest
+        if target_path_obj.is_dir():
+            return self._run_pytest(target_path)
+            
         is_test = target_path.endswith(".py") and ("test_" in target_path or "_test" in target_path)
         
         if is_test:

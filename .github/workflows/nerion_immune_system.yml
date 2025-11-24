@@ -46,10 +46,8 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           echo "🚨 Tests failed! Deploying Universal Fixer..."
-          # Find failed tests (simplified logic, ideally fixer parses pytest output directly)
-          # For now, we run fixer on the whole test directory or specific files
-          # The fixer needs a target. Let's assume we run it on the tests folder.
-          python nerion_digital_physicist/universal_fixer.py tests/ --mode fix
+          # Run fixer on the current directory (it will now handle directories by running pytest)
+          python nerion_digital_physicist/universal_fixer.py . --mode fix
 
       - name: Verify Fix
         if: failure() || steps.run_tests.outcome == 'failure'
