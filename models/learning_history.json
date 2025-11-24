@@ -1,0 +1,16 @@
+[
+  {
+    "timestamp": 1763942782.796277,
+    "file_path": "messy_script.py",
+    "error_type": "other",
+    "original_code": "\ndef do_stuff(x, y, z):\n    # Bad naming, complex logic, no type hints\n    if x > 0:\n        if y > 0:\n            if z > 0:\n                a = x + y\n                b = y + z\n                c = x + z\n                return a * b * c\n            else:\n                return 0\n        else:\n            return 0\n    else:\n        return 0\n\ndef calc(l):\n    # Redundant loop\n    s = 0\n    for i in l:\n        s = s + i\n    return s",
+    "fixed_code": "from typing import List\n\n\ndef calculate_product_of_sums(x: float, y: float, z: float) -> float:\n    \"\"\"Calculate the product of three sums: (x+y) * (y+z) * (x+z).\"\"\"\n    if not _all_positive(x, y, z):\n        return 0\n    \n    sum_xy = x + y\n    sum_yz = y + z\n    sum_xz = x + z\n    \n    return sum_xy * sum_yz * sum_xz\n\n\ndef _all_positive(*values: float) -> bool:\n    \"\"\"Check if all values are positive.\"\"\"\n    return all(value > 0 for value in values)\n\n\ndef calculate_sum(numbers: List[float]) -> float:\n    \"\"\"Calculate the sum of all numbers in the list.\"\"\"\n    return sum(numbers)"
+  },
+  {
+    "timestamp": 1763945824.534573,
+    "file_path": "untyped_script.py",
+    "error_type": "other",
+    "original_code": "\ndef calculate_stats(numbers):\n    total = sum(numbers)\n    count = len(numbers)\n    average = total / count\n    return {\"total\": total, \"average\": average, \"count\": count}\n\ndef process_user(user_data):\n    name = user_data.get(\"name\")\n    age = user_data.get(\"age\")\n    if age > 18:\n        return f\"Welcome {name}\"\n    return None\n",
+    "fixed_code": "from typing import Dict, List, Optional, Union\n\ndef calculate_stats(numbers: List[Union[int, float]]) -> Dict[str, Union[int, float]]:\n    total = sum(numbers)\n    count = len(numbers)\n    average = total / count\n    return {\"total\": total, \"average\": average, \"count\": count}\n\ndef process_user(user_data: Dict[str, Union[str, int]]) -> Optional[str]:\n    name = user_data.get(\"name\")\n    age = user_data.get(\"age\")\n    if age > 18:\n        return f\"Welcome {name}\"\n    return None"
+  }
+]

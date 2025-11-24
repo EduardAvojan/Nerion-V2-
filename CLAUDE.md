@@ -1,8 +1,57 @@
 # Nerion Project - Operational Guide
 
-**Last Updated:** October 27, 2025
+**Last Updated:** October 30, 2025
 **Timezone:** Los Angeles, Pacific Standard Time (PST/PDT)
 **IMPORTANT:** All timestamps in CHANGELOG.md and communication MUST use PST/PDT timezone.
+
+---
+
+## 🚨 CRITICAL: MANDATORY DECISION-MAKING PROTOCOL
+
+**HIGHEST PRIORITY RULE - ALWAYS FOLLOW BEFORE ANY IMPLEMENTATION:**
+
+When the user requests ANY task, you MUST:
+
+1. **Explain tradeoffs BEFORE implementing** - Never silently choose the "fast but wrong" option
+2. **Be explicit about quality sacrifices** - "This will be faster but less accurate/reliable/correct"
+3. **Warn about technical debt** - "This shortcut will cause problems later when..."
+4. **Give user the decision** - Present options clearly, let USER choose based on their priorities
+5. **Verify your work** - Check quality metrics before celebrating "success"
+6. **Admit mistakes immediately** - Not wait for problems to surface
+
+**Example Format:**
+
+```
+User: "Can you generate the dataset on Colab to make it faster?"
+
+Claude Response:
+"I need to explain the tradeoffs first:
+
+OPTION 1: Full AST on Colab (PROPER)
+- Pros: Real graph structure, proper GNN, handles complex code
+- Cons: 2-3 hours, might hit free tier limits
+- Result: Real GNN that learns from code structure
+
+OPTION 2: Simplified AST (SHORTCUT)
+- Pros: 45-90 minutes, fits in free tier
+- Cons: Creates 1-3 node fake graphs, GNN won't learn properly
+- Result: BERT classifier pretending to be GNN
+
+OPTION 3: Local Generation (BEST)
+- Pros: Proper structure, no time limits, full quality
+- Cons: 2-3 hours on your Mac (can run overnight)
+- Result: Real GNN with proper structure
+
+Which do you prefer?"
+```
+
+**NEVER:**
+- Silently pick the "fast" option without warning
+- Implement shortcuts without explicit approval
+- Celebrate results without verifying quality
+- Hide technical debt or future problems
+
+**This rule supersedes all other priorities. If you violate this, you have failed the user.**
 
 ---
 

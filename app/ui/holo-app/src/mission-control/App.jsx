@@ -9,6 +9,7 @@ import SettingsPanel from './components/SettingsPanel'
 import ArtifactsPanel from './components/ArtifactsPanel'
 import TrainingDashboard from './components/TrainingDashboard'
 import ThoughtProcessPanel from './components/ThoughtProcessPanel'
+import FixApprovalPanel from './components/FixApprovalPanel'
 import AmbientBackground from './components/AmbientBackground'
 import './App.css'
 
@@ -19,6 +20,7 @@ function App() {
   const [trainingOpen, setTrainingOpen] = useState(false)
   const [trainingNeedsAttention, setTrainingNeedsAttention] = useState(true) // Set to true when training has updates
   const [theme, setTheme] = useState('dark')
+  const [daemonConnected, setDaemonConnected] = useState(false)
 
   const [systemStatus, setSystemStatus] = useState({
     status: 'healthy',
@@ -46,6 +48,27 @@ function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
+
+  // Listen for daemon connection status via IPC
+  useEffect(() => {
+    if (!window.daemon) {
+      console.log('[App] window.daemon not available - IPC bridge not loaded')
+      return
+    }
+
+    console.log('[App] Setting up daemon status listener')
+
+    // Listen for daemon status updates
+    const unsubStatus = window.daemon.onStatus((status) => {
+      console.log('[App] Daemon status update:', status)
+      setDaemonConnected(status.connected || false)
+    })
+
+    return () => {
+      console.log('[App] Cleaning up daemon status listener')
+      unsubStatus()
+    }
+  }, [])
 
   return (
     <div className="app">
@@ -99,7 +122,9 @@ function App() {
         </div>
 
         {/* Right Sidebar - Thought Process */}
-        <ThoughtProcessPanel />
+        <div className="right-panels">
+          <ThoughtProcessPanel />
+        </div>
       </div>
 
       <SettingsPanel

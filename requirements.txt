@@ -148,3 +148,6 @@ yarl==1.20.1
 # The following packages are considered to be unsafe in a requirements file:
 # pip
 # setuptools
+asttokens>=2.4
+trio>=0.31
+google-cloud-aiplatform>=1.38.0

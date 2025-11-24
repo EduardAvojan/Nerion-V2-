@@ -22,6 +22,15 @@ _CODEBERT_MODEL = None
 _CODEBERT_TOKENIZER = None
 CODEBERT_DIM = 768
 
+# GraphCodeBERT model support (for on-the-fly embedding generation)
+_GRAPHCODEBERT_MODEL = None
+_GRAPHCODEBERT_TOKENIZER = None
+GRAPHCODEBERT_DIM = 768
+
+# GraphCodeBERT pre-computed embeddings support (for curriculum lessons)
+_GRAPHCODEBERT_EMBEDDINGS = None
+_GRAPHCODEBERT_LESSON_MAP = None
+
 
 class SemanticEmbedder:
     """Generate deterministic semantic embeddings for code snippets.
@@ -63,14 +72,21 @@ class SemanticEmbedder:
         if not timeout_value or timeout_value <= 0:
             timeout_value = DEFAULT_TIMEOUT
         self.timeout = float(timeout_value)
-        provider_id = provider or os.getenv("NERION_SEMANTIC_PROVIDER", "hash")
+        # Default to GraphCodeBERT for 768-dim embeddings (required by trained 91.8% GNN model)
+        # Can be overridden via NERION_SEMANTIC_PROVIDER environment variable
+        provider_id = provider or os.getenv("NERION_SEMANTIC_PROVIDER", "graphcodebert")
         provider_id = provider_id.strip().lower()
         self._registry: Optional[ProviderRegistry] = None
         self._provider_override: Optional[str] = None
         self.dimension = dimension
 
+        # Check for GraphCodeBERT provider (pre-computed embeddings)
+        if provider_id == "graphcodebert":
+            self.provider = "graphcodebert"
+            self._provider_override = None
+            self.dimension = GRAPHCODEBERT_DIM
         # Check for CodeBERT provider
-        if provider_id == "codebert":
+        elif provider_id == "codebert":
             self.provider = "codebert"
             self._provider_override = None
             self.dimension = CODEBERT_DIM
@@ -108,7 +124,9 @@ class SemanticEmbedder:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        if self.provider == "codebert":
+        if self.provider == "graphcodebert":
+            vector = self._graphcodebert_embedding(identifier, text)
+        elif self.provider == "codebert":
             vector = self._codebert_embedding(text)
         elif self.provider == "hash" or not self._registry or not self._provider_override:
             vector = self._hash_embedding(text)
@@ -206,6 +224,68 @@ class SemanticEmbedder:
 
         except Exception as e:
             print(f"CodeBERT embedding failed: {e}. Falling back to hash.")
+            return self._hash_embedding(text)
+
+    def _graphcodebert_embedding(self, identifier: str, text: str) -> List[float]:
+        """Generate GraphCodeBERT embedding for code snippet.
+
+        Loads microsoft/graphcodebert-base model from bundled weights and generates
+        embeddings on-the-fly for any code. This is required for the 91.8% GNN model.
+        """
+        global _GRAPHCODEBERT_MODEL, _GRAPHCODEBERT_TOKENIZER
+
+        # Lazy load GraphCodeBERT model
+        if _GRAPHCODEBERT_MODEL is None or _GRAPHCODEBERT_TOKENIZER is None:
+            try:
+                from transformers import AutoTokenizer, AutoModel
+                import torch
+
+                # Path to bundled model weights (local, no internet needed)
+                bundled_model_path = Path(__file__).resolve().parent.parent.parent / "models" / "graphcodebert"
+
+                if bundled_model_path.exists():
+                    print(f"Loading GraphCodeBERT from bundled weights: {bundled_model_path}")
+                    _GRAPHCODEBERT_TOKENIZER = AutoTokenizer.from_pretrained(str(bundled_model_path))
+                    _GRAPHCODEBERT_MODEL = AutoModel.from_pretrained(str(bundled_model_path))
+                else:
+                    # Fallback: Download from HuggingFace (first-time only)
+                    print("Bundled GraphCodeBERT not found. Downloading from microsoft/graphcodebert-base...")
+                    print("(This is a one-time download. Bundle weights for offline use.)")
+                    _GRAPHCODEBERT_TOKENIZER = AutoTokenizer.from_pretrained("microsoft/graphcodebert-base")
+                    _GRAPHCODEBERT_MODEL = AutoModel.from_pretrained("microsoft/graphcodebert-base")
+
+                _GRAPHCODEBERT_MODEL.eval()  # Set to evaluation mode
+                print("✅ GraphCodeBERT model loaded successfully!")
+            except Exception as e:
+                print(f"Failed to load GraphCodeBERT: {e}. Falling back to hash embedding.")
+                return self._hash_embedding(text)
+
+        try:
+            import torch
+
+            # Truncate text if too long (max 512 tokens for GraphCodeBERT)
+            text = text[:2000]  # Rough character limit
+
+            # Tokenize and encode
+            inputs = _GRAPHCODEBERT_TOKENIZER(
+                text,
+                return_tensors="pt",
+                max_length=512,
+                truncation=True,
+                padding="max_length"
+            )
+
+            # Generate embedding (mean pool over tokens)
+            with torch.no_grad():
+                outputs = _GRAPHCODEBERT_MODEL(**inputs)
+                # Use [CLS] token embedding (first token) - same as CodeBERT
+                embedding = outputs.last_hidden_state[:, 0, :].squeeze()
+                vector = embedding.tolist()
+
+            return [float(v) for v in vector]
+
+        except Exception as e:
+            print(f"GraphCodeBERT embedding failed: {e}. Falling back to hash.")
             return self._hash_embedding(text)
 
     def _persist_cache(self) -> None:

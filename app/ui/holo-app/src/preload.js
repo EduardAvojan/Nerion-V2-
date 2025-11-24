@@ -39,4 +39,31 @@ contextBridge.exposeInMainWorld('nerion', {
   }
 });
 
-console.log('[PRELOAD] window.nerion exposed successfully');
+// Daemon IPC for fix approval system
+contextBridge.exposeInMainWorld('daemon', {
+  send(command) {
+    console.log('[PRELOAD] Sending daemon command:', command.type);
+    ipcRenderer.send('daemon-command', command);
+  },
+  onFixProposal(handler) {
+    console.log('[PRELOAD] Registering fix proposal handler');
+    return subscribe('daemon-fix-proposal', handler);
+  },
+  onPendingFixes(handler) {
+    console.log('[PRELOAD] Registering pending fixes handler');
+    return subscribe('daemon-pending-fixes', handler);
+  },
+  onFixResponse(handler) {
+    console.log('[PRELOAD] Registering fix response handler');
+    return subscribe('daemon-fix-response', handler);
+  },
+  getPendingFixes() {
+    console.log('[PRELOAD] Requesting pending fixes');
+    ipcRenderer.send('daemon-get-pending-fixes');
+  },
+  onStatus(handler) {
+    return subscribe('daemon-status', handler);
+  }
+});
+
+console.log('[PRELOAD] window.nerion and window.daemon exposed successfully');

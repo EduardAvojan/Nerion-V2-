@@ -18,14 +18,62 @@ import re
 import select
 import struct
 import termios
+import time
+from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Set
+from typing import Optional, Set, Dict, Tuple
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from output_parser import OutputParser
+from json_logging import (
+    log_request,
+    log_auth_failure,
+    log_rate_limit,
+    log_injection_attempt,
+    log_terminal_event,
+    logger,
+)
+from injection_detector import detect_injection
+import socket
+
+# Daemon Socket Path
+DAEMON_SOCKET_PATH = Path.home() / ".nerion" / "daemon.sock"
+
+# Connected WebSocket clients for event broadcasting
+event_clients: Set[WebSocket] = set()
+
+async def send_daemon_command(command: dict) -> dict:
+    """Send a command to the Nerion Daemon via Unix socket."""
+    if not DAEMON_SOCKET_PATH.exists():
+        return {"status": "error", "message": "Daemon not running (socket not found)"}
+        
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.connect(str(DAEMON_SOCKET_PATH))
+        
+        # Send command
+        message = json.dumps(command).encode('utf-8')
+        client.sendall(message)
+        
+        # Wait for response (optional, daemon might just ack)
+        # For now we just fire and forget or wait for a small ack if implemented
+        # But the daemon protocol we saw earlier writes back to the writer
+        
+        # Let's try to read a response
+        client.settimeout(2.0)
+        response = client.recv(4096)
+        client.close()
+        
+        if response:
+            return json.loads(response.decode('utf-8'))
+        return {"status": "sent"}
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 app = FastAPI(title="Nerion Mission Control API", version="1.0.0")
@@ -34,10 +82,246 @@ app = FastAPI(title="Nerion Mission Control API", version="1.0.0")
 event_clients: Set[WebSocket] = set()
 output_parser = OutputParser()
 
+# API Key authentication (set NERION_API_KEY in .env for production)
+NERION_API_KEY = os.getenv("NERION_API_KEY", "nerion-dev-key-local-only")
+
+
+# ============================================================================
+# RATE LIMITING (Token Bucket Algorithm)
+# ============================================================================
+class RateLimiter:
+    """Token bucket rate limiter for per-IP request throttling."""
+
+    def __init__(self, requests_per_minute: int = 60):
+        """Initialize rate limiter.
+
+        Args:
+            requests_per_minute: Allow N requests per minute per IP
+        """
+        self.requests_per_minute = requests_per_minute
+        self.requests: Dict[str, Tuple[int, float]] = defaultdict(lambda: (0, time.time()))
+
+    def is_allowed(self, client_ip: str) -> bool:
+        """Check if request is allowed for this IP.
+
+        Args:
+            client_ip: Client IP address
+
+        Returns:
+            True if request is allowed, False if rate limit exceeded
+        """
+        now = time.time()
+        requests_count, last_reset = self.requests[client_ip]
+
+        # Reset bucket every 60 seconds
+        if now - last_reset > 60:
+            self.requests[client_ip] = (0, now)
+            return True
+
+        # Check if within limit
+        if requests_count < self.requests_per_minute:
+            self.requests[client_ip] = (requests_count + 1, last_reset)
+            return True
+
+        return False
+
+
+# Initialize rate limiters for different endpoints
+rest_api_limiter = RateLimiter(requests_per_minute=120)  # REST API: 120/min
+websocket_limiter = RateLimiter(requests_per_minute=10)  # WebSocket: 10/min (strict)
+
+
+def get_client_ip(request) -> str:
+    """Extract client IP from request, handling proxies."""
+    # Check X-Forwarded-For header first (for proxied requests)
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    # Fall back to direct connection IP
+    return request.client.host if request.client else "unknown"
+
+
+@app.middleware("http")
+async def injection_detection_middleware(request: Request, call_next):
+    """Detect and block injection attacks."""
+    client_ip = get_client_ip(request)
+    endpoint = request.url.path
+
+    # Skip health check endpoints
+    if endpoint in ["/health", "/docs", "/openapi.json"]:
+        return await call_next(request)
+
+    # Check query parameters
+    query_string = request.url.query
+    if query_string and detect_injection(query_string, client_ip, endpoint):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Suspicious input detected. Request blocked."},
+        )
+
+    # For POST/PUT requests, check body
+    if request.method in ["POST", "PUT"]:
+        try:
+            body = await request.body()
+            body_str = body.decode("utf-8") if body else ""
+
+            if body_str and detect_injection(body_str, client_ip, endpoint):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Suspicious input detected. Request blocked."},
+                )
+
+            # Create a new request with the same body for downstream processing
+            async def receive():
+                return {"type": "http.request", "body": body}
+
+            request._receive = receive
+        except Exception as e:
+            logger.warning(f"Error checking request body: {e}")
+
+    # Continue to next middleware
+    response = await call_next(request)
+    return response
+
+
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    """Centralized logging middleware with request timing."""
+    start_time = time.time()
+    client_ip = get_client_ip(request)
+
+    # Get request details
+    method = request.method
+    endpoint = request.url.path
+    user_agent = request.headers.get("user-agent")
+
+    try:
+        response = await call_next(request)
+        response_time_ms = (time.time() - start_time) * 1000
+
+        # Log the request
+        log_request(
+            client_ip=client_ip,
+            method=method,
+            endpoint=endpoint,
+            status_code=response.status_code,
+            response_time_ms=response_time_ms,
+            user_agent=user_agent,
+            auth_status="authenticated" if "Authorization" in request.headers else "unauthenticated",
+        )
+
+        # Add logging headers
+        response.headers["X-Response-Time"] = f"{response_time_ms:.2f}"
+        return response
+    except Exception as e:
+        response_time_ms = (time.time() - start_time) * 1000
+        logger.error(f"Request failed: {method} {endpoint}", exc_info=e)
+        raise
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    """Rate limit REST API endpoints."""
+    client_ip = get_client_ip(request)
+
+    if not rest_api_limiter.is_allowed(client_ip):
+        log_rate_limit(
+            client_ip=client_ip,
+            endpoint=request.url.path,
+            limit=120,
+            period="minute",
+        )
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Too many requests. Rate limit: 120/minute"},
+            headers={"Retry-After": "60"},
+        )
+
+    response = await call_next(request)
+    response.headers["X-RateLimit-Limit"] = str(rest_api_limiter.requests_per_minute)
+    response.headers["X-RateLimit-Remaining"] = str(
+        rest_api_limiter.requests_per_minute
+        - rest_api_limiter.requests.get(client_ip, (0, 0))[0]
+    )
+    return response
+
+def verify_api_key(websocket: WebSocket) -> bool:
+    """Verify API key from WebSocket headers or query parameters.
+
+    Args:
+        websocket: WebSocket connection
+
+    Returns:
+        True if valid API key provided, False otherwise
+    """
+    # Check Authorization header (Bearer token)
+    auth_header = websocket.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "")
+        return token == NERION_API_KEY
+
+    # Check query parameter (for WebSocket connections)
+    token = websocket.query_params.get("token")
+    if token:
+        return token == NERION_API_KEY
+
+    return False
+
+# Security headers middleware - Add before CORS to ensure they're applied
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    """Add security headers to all HTTP responses."""
+    response = await call_next(request)
+
+    # Prevent MIME type sniffing (ensure browser respects Content-Type)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # Prevent clickjacking (deny framing in any context)
+    response.headers["X-Frame-Options"] = "DENY"
+
+    # XSS protection (enable browser's built-in XSS filter)
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+
+    # Content Security Policy - strict policy for local development
+    # Allows only same-origin resources and inline scripts (necessary for WebSocket)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "font-src 'self'; "
+        "connect-src 'self' ws://localhost:* wss://localhost:*; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+    # HSTS - enforce HTTPS (commented out for localhost development, enable in production)
+    # response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    # Referrer policy - don't leak referrer information
+    response.headers["Referrer-Policy"] = "no-referrer"
+
+    # Permissions policy - restrict browser features
+    response.headers["Permissions-Policy"] = (
+        "geolocation=(), "
+        "microphone=(), "
+        "camera=(), "
+        "payment=(), "
+        "usb=(), "
+        "magnetometer=(), "
+        "gyroscope=(), "
+        "accelerometer=()"
+    )
+
+    return response
+
+
 # Enable CORS for web frontend
+# CORS restricted to localhost only (server binds to 127.0.0.1:8000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # Electron app origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -213,9 +497,37 @@ async def terminal_websocket(websocket: WebSocket):
     - Robust error handling with recovery
     - Buffer overflow protection
     - Graceful degradation
+    - API key authentication
     """
+    # Authenticate before accepting connection
+    if not verify_api_key(websocket):
+        client_ip = get_client_ip(websocket) if hasattr(websocket, 'client') and websocket.client else "unknown"
+        log_auth_failure(
+            client_ip=client_ip,
+            endpoint="/api/terminal",
+            reason="Invalid or missing API key",
+            user_agent=websocket.headers.get("user-agent"),
+        )
+        await websocket.close(code=4001, reason="Unauthorized: Invalid or missing API key")
+        return
+
+    # Rate limit WebSocket connections (strict: 10 connections per minute per IP)
+    client_ip = get_client_ip(websocket) if hasattr(websocket, 'client') and websocket.client else "unknown"
+    if not websocket_limiter.is_allowed(client_ip):
+        log_rate_limit(
+            client_ip=client_ip,
+            endpoint="/api/terminal",
+            limit=10,
+            period="minute",
+        )
+        await websocket.close(code=4029, reason="Rate limit exceeded: 10 connections/minute")
+        return
+
     await websocket.accept()
-    print(f"[Terminal] Client connected from {websocket.client}")
+    log_terminal_event(
+        event_type="client_connected",
+        client_ip=client_ip,
+    )
 
     # Spawn shell
     pty_manager = PTYManager()
@@ -229,7 +541,11 @@ async def terminal_websocket(websocket: WebSocket):
 
     try:
         pty_manager.spawn_shell()
-        print(f"[Terminal] Spawned shell with PID {pty_manager.pid}")
+        log_terminal_event(
+            event_type="shell_spawned",
+            pid=pty_manager.pid,
+            client_ip=client_ip,
+        )
 
         # Keepalive task to prevent WebSocket timeout
         async def keepalive():
@@ -355,6 +671,15 @@ async def terminal_websocket(websocket: WebSocket):
                                 # Don't break - PTY might recover
 
                         elif 'text' in message:
+                            # Check for injection attacks in text messages
+                            if detect_injection(message['text'], client_ip, "/api/terminal"):
+                                print(f"[Terminal] Injection attempt detected from {client_ip}")
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": "Suspicious input detected. Request blocked."
+                                })
+                                continue
+
                             # Handle resize events and pong responses (JSON)
                             try:
                                 event = json.loads(message['text'])
@@ -559,10 +884,106 @@ async def get_pending_upgrades():
         ]
     }
 
+@app.post("/api/control/start_autonomy")
+async def start_autonomy():
+    """Start the autonomous testing loop."""
+    logger.info("Requesting start of autonomous testing")
+    result = await send_daemon_command({"type": "start_autonomous_testing"})
+    return result
+
+@app.post("/api/control/stop_autonomy")
+async def stop_autonomy():
+    """Stop the autonomous testing loop."""
+    logger.info("Requesting stop of autonomous testing")
+    result = await send_daemon_command({"type": "stop_autonomous_testing"})
+    return result
+
+@app.get("/api/training/status")
+async def get_training_status():
+    """Get real training status from daemon."""
+    # We can ask the daemon for status
+    result = await send_daemon_command({"type": "get_status"})
+    if result.get("status") == "error":
+        # Fallback to mock if daemon unreachable
+        return {"status": "offline", "message": result.get("message")}
+    return result
+
+
+async def log_debug(msg):
+    with open("app/api/debug_events.log", "a") as f:
+        f.write(f"{time.ctime()}: {msg}\n")
+
+async def listen_to_daemon_events():
+    """Background task to listen for events from the daemon and broadcast to clients."""
+    await log_debug("Starting daemon listener task...")
+    while True:
+        try:
+            await log_debug(f"Attempting to connect to {DAEMON_SOCKET_PATH}...")
+            reader, writer = await asyncio.open_unix_connection(DAEMON_SOCKET_PATH)
+            await log_debug("Connected to daemon event stream!")
+            
+            while True:
+                try:
+                    line = await reader.readline()
+                    if not line:
+                        await log_debug("Daemon sent EOF (connection closed by daemon)")
+                        break
+                    
+                    # await log_debug(f"Received raw: {line[:50]}...") 
+                    
+                    message = json.loads(line.decode())
+                    # Broadcast to all connected WebSocket clients
+                    if event_clients:
+                        await log_debug(f"Broadcasting to {len(event_clients)} clients")
+                        # Create tasks for all sends to avoid blocking
+                        await asyncio.gather(
+                            *[client.send_json(message) for client in event_clients],
+                            return_exceptions=True
+                        )
+                except json.JSONDecodeError as e:
+                    await log_debug(f"JSON decode error: {e}")
+                    continue
+                except Exception as e:
+                    await log_debug(f"Error processing message: {e}")
+                    import traceback
+                    await log_debug(traceback.format_exc())
+                    
+            await log_debug("Daemon connection loop ended, closing writer...")
+            writer.close()
+            await writer.wait_closed()
+            
+        except (FileNotFoundError, ConnectionRefusedError):
+            await log_debug("Daemon socket not found or refused. Retrying in 5s...")
+            await asyncio.sleep(5)
+        except Exception as e:
+            await log_debug(f"Daemon listener CRASH: {e}")
+            import traceback
+            await log_debug(traceback.format_exc())
+            await asyncio.sleep(5)
+
+# Global reference to prevent GC
+daemon_listener_task = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on startup."""
+    global daemon_listener_task
+    # Important: Keep a strong reference to the task to prevent garbage collection
+    daemon_listener_task = asyncio.create_task(listen_to_daemon_events())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    global daemon_listener_task
+    if daemon_listener_task:
+        daemon_listener_task.cancel()
+        try:
+            await daemon_listener_task
+        except asyncio.CancelledError:
+            pass
 
 if __name__ == "__main__":
     import uvicorn
-
     print("""
     ╔════════════════════════════════════════════════════╗
     ║  🧬 NERION MISSION CONTROL - TERMINAL SERVER      ║
@@ -570,7 +991,13 @@ if __name__ == "__main__":
     ║  WebSocket Terminal:  ws://localhost:8000/api/terminal  ║
     ║  WebSocket Events:    ws://localhost:8000/api/events    ║
     ║  REST API:            http://localhost:8000/api/        ║
+    ║  Protocol:            HTTP (Local Development)          ║
     ╚════════════════════════════════════════════════════╝
     """)
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=8000,
+        log_level="info"
+    )

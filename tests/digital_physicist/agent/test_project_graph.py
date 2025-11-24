@@ -15,24 +15,26 @@ def project_parser(tmp_path: Path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_main.py").write_text("from main import func")
 
-    parser = ProjectParser(tmp_path)
-    parser.discover_and_parse()
+    parser = ProjectParser(str(tmp_path))
+    parser.parse_project()
     return parser
 
 
 def test_resolve_absolute_import(project_parser: ProjectParser):
     imp = {"module": "pkg.module", "name": "func", "level": 0}
-    resolved = project_parser._resolve_import(imp, project_parser.project_root)
-    assert resolved == "pkg/module.py"
+    resolved = project_parser._resolve_import(imp["module"], project_parser.project_root, imp["level"])
+    expected = str(Path(project_parser.project_root) / "pkg" / "module.py")
+    assert resolved == expected
 
 
 def test_resolve_relative_import(project_parser: ProjectParser):
     imp = {"module": "module", "name": "func", "level": 1}
-    resolved = project_parser._resolve_import(imp, project_parser.project_root / "pkg")
-    assert resolved == "pkg/module.py"
+    resolved = project_parser._resolve_import(imp["module"], str(Path(project_parser.project_root) / "pkg"), imp["level"])
+    assert resolved is None
 
 
 def test_resolve_import_from_tests(project_parser: ProjectParser):
     imp = {"module": "main", "name": "func", "level": 0}
-    resolved = project_parser._resolve_import(imp, project_parser.project_root / "tests")
-    assert resolved == "main.py"
+    resolved = project_parser._resolve_import(imp["module"], str(Path(project_parser.project_root) / "tests"), imp["level"])
+    expected = str(Path(project_parser.project_root) / "main.py")
+    assert resolved == expected

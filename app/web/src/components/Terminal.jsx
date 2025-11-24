@@ -77,7 +77,7 @@ export default function Terminal() {
         wsRef.current.close()
       }
 
-      const ws = new WebSocket('ws://localhost:8000/api/terminal')
+      const ws = new WebSocket('ws://localhost:8000/api/terminal?token=nerion-dev-key-local-only')
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
 
