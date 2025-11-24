@@ -393,7 +393,11 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
     def _load_or_create_model(self):
         from nerion_digital_physicist.agent.brain import CodeGraphGCN
         import os
-        model_path = "/Users/ed/Nerion-V2/models/nerion_immune_brain.pt"
+        
+        # Dynamic path relative to project root
+        project_root = Path(__file__).parent.parent
+        model_path = project_root / "models" / "nerion_immune_brain.pt"
+        
         if os.path.exists(model_path):
             try:
                 model = CodeGraphGCN(num_node_features=800, hidden_channels=256, num_classes=5, num_layers=4)
@@ -404,7 +408,10 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
 
     def _save_model(self):
         import os
-        model_path = "/Users/ed/Nerion-V2/models/nerion_immune_brain.pt"
+        
+        project_root = Path(__file__).parent.parent
+        model_path = project_root / "models" / "nerion_immune_brain.pt"
+        
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         torch.save(self.model.state_dict(), model_path)
         self._save_learning_history()
@@ -412,7 +419,9 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
     def _save_learning_history(self):
         """Save raw learning examples to JSON for audit"""
         import json
-        history_path = "/Users/ed/Nerion-V2/models/learning_history.json"
+        
+        project_root = Path(__file__).parent.parent
+        history_path = project_root / "models" / "learning_history.json"
         
         new_entries = []
         for ex in self.learning_examples:
