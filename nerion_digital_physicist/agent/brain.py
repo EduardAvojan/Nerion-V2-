@@ -501,6 +501,79 @@ def build_gnn(
 CodeGraphNN = CodeGraphGCN
 
 
+def load_contrastive_pretrained(
+    model: nn.Module,
+    checkpoint_path: str,
+    strict: bool = False,
+) -> nn.Module:
+    """
+    Load contrastive pretrained weights into a GNN model.
+
+    The contrastive pretraining saves backbone weights (SAGE layers + norms)
+    that can be transferred to any CodeGraph* model for better initialization.
+
+    Args:
+        model: Target GNN model (CodeGraphSAGE, MultiTaskCodeGraphSAGE, etc.)
+        checkpoint_path: Path to contrastive_pretrained.pt
+        strict: If True, require all keys to match exactly
+
+    Returns:
+        Model with pretrained weights loaded
+
+    Example:
+        >>> model = build_gnn('sage', num_features, hidden, num_classes)
+        >>> model = load_contrastive_pretrained(model, 'models/contrastive_pretrained.pt')
+    """
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+
+    # Get backbone state dict from checkpoint
+    if 'backbone_state_dict' in checkpoint:
+        pretrained_dict = checkpoint['backbone_state_dict']
+    else:
+        # Fallback: extract from full model state dict
+        pretrained_dict = {}
+        model_dict = checkpoint.get('model_state_dict', checkpoint)
+        for key, value in model_dict.items():
+            if key.startswith('sage_layers.') or key.startswith('layers.') or key.startswith('norms.'):
+                pretrained_dict[key] = value
+
+    # Handle different model architectures
+    model_state = model.state_dict()
+    loaded_keys = []
+    skipped_keys = []
+
+    for key, value in pretrained_dict.items():
+        # Map 'layers.' -> model-specific layer names
+        target_key = key
+
+        # For MultiTaskCodeGraphSAGE: layers.X -> sage_layers.X
+        if 'sage_layers' in model_state and key.startswith('layers.'):
+            target_key = key.replace('layers.', 'sage_layers.')
+
+        if target_key in model_state:
+            if model_state[target_key].shape == value.shape:
+                model_state[target_key] = value
+                loaded_keys.append(target_key)
+            else:
+                skipped_keys.append(f"{target_key} (shape mismatch)")
+        else:
+            skipped_keys.append(f"{key} (not found)")
+
+    # Load updated state dict
+    model.load_state_dict(model_state, strict=False)
+
+    print(f"[ContrastivePretrain] Loaded {len(loaded_keys)} pretrained parameters")
+    if loaded_keys and len(loaded_keys) <= 10:
+        for k in loaded_keys:
+            print(f"  + {k}")
+    if skipped_keys:
+        print(f"[ContrastivePretrain] Skipped {len(skipped_keys)} parameters:")
+        for k in skipped_keys[:5]:
+            print(f"  - {k}")
+
+    return model
+
+
 __all__ = [
     "CodeGraphGCN",
     "CodeGraphSAGE",
@@ -509,4 +582,5 @@ __all__ = [
     "MultiTaskCodeGraphSAGE",
     "CodeGraphNN",
     "build_gnn",
+    "load_contrastive_pretrained",
 ]
