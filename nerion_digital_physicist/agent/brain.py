@@ -134,6 +134,46 @@ class CodeGraphGCN(_StackedGraphModel):
             use_graphcodebert=use_graphcodebert,
         )
 
+    def predict_health(self, graph_data) -> float:
+        """
+        Predict the health score of a code graph.
+        
+        Args:
+            graph_data: PyG Data object containing the code graph
+            
+        Returns:
+            float: Health score between 0.0 (healthy) and 1.0 (buggy)
+        """
+        self.eval()
+        with torch.no_grad():
+            # Add batch dimension if missing
+            if not hasattr(graph_data, 'batch') or graph_data.batch is None:
+                graph_data.batch = torch.zeros(graph_data.x.size(0), dtype=torch.long)
+            
+            # Forward pass
+            logits = self.forward(
+                graph_data.x, 
+                graph_data.edge_index, 
+                graph_data.batch,
+                edge_attr=getattr(graph_data, 'edge_attr', None)
+            )
+            
+            # Convert to probability (sigmoid)
+            probs = torch.sigmoid(logits)
+            
+            # Return probability of "bug" class (assuming class 1 is bug, or single output)
+            # If multi-class, we might need to adjust. 
+            # Based on MultiTaskCodeGraphSAGE, bug head outputs 1 dim.
+            # But CodeGraphGCN has num_classes.
+            
+            if probs.dim() > 1 and probs.size(1) > 1:
+                # Multi-class: return max probability or probability of specific "bug" class
+                # Assuming class 0 is healthy, 1-4 are error types.
+                # So health score = sum(probs[1:]) or 1 - prob[0]
+                return 1.0 - probs[0, 0].item()
+            else:
+                return probs.item()
+
 
 class CodeGraphSAGE(_StackedGraphModel):
     """GraphSAGE stack with residual support."""

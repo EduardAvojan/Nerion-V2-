@@ -24,6 +24,7 @@ from selfcoder.planner.explainable_planner import ExplainablePlanner
 from nerion_digital_physicist.training.online_learner import OnlineLearner
 from nerion_digital_physicist.agent.data import create_graph_data_object
 from nerion_digital_physicist.agent.semantics import get_global_embedder
+from nerion_digital_physicist.memory.episodic_memory import EpisodicMemory, Episode, EpisodeType, EpisodeOutcome
 import torch
 
 # Load environment variables from .env
@@ -45,32 +46,85 @@ class ExecutionError:
         self.error_type = error_type
 
 class UniversalFixer:
-    def __init__(self, enable_learning: bool = True, dry_run: bool = False, mode: str = "fix", benchmark_mode: bool = False):
+    def __init__(self, enable_learning: bool = True, dry_run: bool = False, mode: str = "fix", benchmark_mode: bool = False, language: str = "python"):
         self.planner = ExplainablePlanner(min_confidence_for_execution=0.7)
         self.fixes_applied = []
         self.enable_learning = enable_learning
         self.dry_run = dry_run
         self.mode = mode
         self.benchmark_mode = benchmark_mode
+        self.language = language  # Store language for evolution prompts
         self.embedder = get_global_embedder()
         
         # Initialize the learning system
         if enable_learning:
             try:
                 self.learner = OnlineLearner()
+                
+                # Load learner state if exists
+                project_root = Path(__file__).parent.parent
+                learner_path = project_root / "models" / "online_learner_state.pt"
+                
+                print(f"[DEBUG] Checking for checkpoint at: {learner_path}", flush=True)
+                print(f"[DEBUG] Checkpoint exists: {learner_path.exists()}", flush=True)
+                
+                if learner_path.exists():
+                    logger.info(f"📦 Loading OnlineLearner checkpoint from {learner_path}")
+                    print(f"📦 Loading OnlineLearner checkpoint from {learner_path}", flush=True)
+                    try:
+                        self.learner.load_checkpoint(learner_path)
+                        print(f"✅ Checkpoint loaded successfully! Task count: {self.learner.task_count}", flush=True)
+                    except Exception as e:
+                        logger.warning(f"Could not load learner checkpoint: {e}")
+                        print(f"❌ Checkpoint loading failed: {e}", flush=True)
+                else:
+                    logger.info(f"📦 No existing checkpoint found at {learner_path}, starting fresh")
+                    print(f"📦 No existing checkpoint, starting fresh", flush=True)
+
+                
                 self.learning_examples = []  # Store (graph, error, fix) tuples
                 self.model = self._load_or_create_model()
-                self.error_to_label = {  # Map error types to class labels
+                self.error_to_label = {  # Map task types to class labels (20 classes)
+                    # Bug fixes (8 classes)
                     'attribute_error': 0,
                     'type_error': 1,
-                    'assertion_error': 2,
-                    'import_error': 3,
-                    'other': 4
+                    'value_error': 2,
+                    'index_error': 3,
+                    'key_error': 4,
+                    'import_error': 5,
+                    'syntax_error': 6,
+                    'logic_error': 7,
+                    # Code quality (5 classes)
+                    'complexity_reduction': 8,
+                    'naming_improvement': 9,
+                    'code_duplication': 10,
+                    'maintainability': 11,
+                    'readability': 12,
+                    # Architecture (3 classes)
+                    'design_pattern': 13,
+                    'dependency_management': 14,
+                    'modularity': 15,
+                    # Security (2 classes)
+                    'injection_prevention': 16,
+                    'secret_management': 17,
+                    # Performance & Type Safety (2 classes)
+                    'performance_optimization': 18,
+                    'type_safety': 19
                 }
                 logger.info("🧠 Learning mode ENABLED - Will learn from successful fixes")
             except Exception as e:
                 logger.warning(f"Could not initialize OnlineLearner: {e}")
+                print(f"❌ OnlineLearner init failed: {e}", flush=True)
                 self.enable_learning = False
+
+        # Initialize Episodic Memory (Long-term experience)
+        try:
+            memory_path = Path(__file__).parent.parent / "data" / "episodic_memory"
+            self.memory = EpisodicMemory(storage_path=memory_path)
+            logger.info(f"🧠 Episodic Memory initialized at {memory_path}")
+        except Exception as e:
+            logger.warning(f"Could not initialize EpisodicMemory: {e}")
+            self.memory = None
         
     def detect_errors(self, target_path: str) -> List[ExecutionError]:
         """Step 1: Run the target (script, test file, or directory) and detect failures"""
@@ -323,8 +377,37 @@ Full Traceback:
 Current Code:
 ```python
 {code}
-```
+```"""
 
+            # RAG: Inject similar past fixes from memory
+            if self.memory:
+                try:
+                    query_episode = Episode(
+                        episode_id="query",
+                        episode_type=EpisodeType.BUG_FIX,
+                        task=error.error_msg,
+                        code_before=code,
+                        action_taken="",
+                        code_after="",
+                        context={},
+                        tags=[self._categorize_error(error.error_msg)]
+                    )
+                    similar_episodes = self.memory.recall_similar(query_episode, k=3)
+                    
+                    if similar_episodes:
+                        logger.info(f"🧠 Recalled {len(similar_episodes)} similar past fixes")
+                        prompt += "\n\nRelevant Past Fixes (Learn from these):\n"
+                        for i, ep in enumerate(similar_episodes):
+                            prompt += f"""
+--- Example {i+1} ---
+Task: {ep.task}
+Action: {ep.action_taken}
+Outcome: {ep.outcome.value}
+"""
+                except Exception as e:
+                    logger.warning(f"Memory recall failed: {e}")
+
+            prompt += """
 Task: Fix the code to resolve the error.
 Analyze the traceback to find the root cause.
 Return ONLY the corrected Python code for the ENTIRE file. No explanations, no markdown."""
@@ -361,27 +444,100 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
         return len(errors) == 0
     
     def _store_fix_example(self, file_path: Path, original_code: str, fixed_code: str, error: ExecutionError):
-        if not self.enable_learning: return
-        try:
-            graph_data = create_graph_data_object(file_path, embedder=self.embedder)
-            example = {
-                'graph': graph_data,
-                'error_type': self._categorize_error(error.error_msg),
-                'original_code': original_code,
-                'fixed_code': fixed_code,
-                'file_path': str(file_path)
-            }
-            self.learning_examples.append(example)
-            logger.info(f"💾 Stored learning example (total: {len(self.learning_examples)})")
-        except Exception as e:
-            logger.warning(f"Could not create learning example: {e}")
+        # 1. Store for Online Learner (GNN Training)
+        if self.enable_learning:
+            try:
+                graph_data = create_graph_data_object(file_path, embedder=self.embedder)
+                example = {
+                    'graph': graph_data,
+                    'error_type': self._categorize_error(error.error_msg),
+                    'original_code': original_code,
+                    'fixed_code': fixed_code,
+                    'file_path': str(file_path)
+                }
+                self.learning_examples.append(example)
+                logger.info(f"💾 Stored learning example (total: {len(self.learning_examples)})")
+            except Exception as e:
+                logger.warning(f"Could not create learning example: {e}")
+
+        # 2. Store in Episodic Memory (Experience Replay)
+        if self.memory:
+            try:
+                import uuid
+                episode = Episode(
+                    episode_id=str(uuid.uuid4()),
+                    episode_type=EpisodeType.BUG_FIX,
+                    task=f"Fix {error.error_msg}",
+                    code_before=original_code,
+                    action_taken="Applied LLM Fix",
+                    code_after=fixed_code,
+                    context={'file_path': str(file_path), 'error_type': error.error_type},
+                    outcome=EpisodeOutcome.SUCCESS,
+                    surprise=0.5, # Default surprise
+                    impact=0.8,   # Bug fixes are high impact
+                    tags=[self._categorize_error(error.error_msg), 'autonomous_fix']
+                )
+                self.memory.store_episode(episode)
+            except Exception as e:
+                logger.warning(f"Could not store episode in memory: {e}")
 
     def _categorize_error(self, error_msg: str) -> str:
-        if "AttributeError" in error_msg: return "attribute_error"
-        elif "TypeError" in error_msg: return "type_error"
-        elif "AssertionError" in error_msg: return "assertion_error"
-        elif "ImportError" in error_msg or "ModuleNotFoundError" in error_msg: return "import_error"
-        else: return "other"
+        """Categorize task type for GNN training (20 classes)."""
+        msg_lower = error_msg.lower()
+        
+        # Bug fixes (8 classes) - from actual runtime errors
+        if "AttributeError" in error_msg or "attribute" in msg_lower:
+            return "attribute_error"
+        elif "TypeError" in error_msg:
+            return "type_error"
+        elif "ValueError" in error_msg:
+            return "value_error"
+        elif "IndexError" in error_msg or "index out of" in msg_lower:
+            return "index_error"
+        elif "KeyError" in error_msg:
+            return "key_error"
+        elif "ImportError" in error_msg or "ModuleNotFoundError" in error_msg:
+            return "import_error"
+        elif "SyntaxError" in error_msg or "IndentationError" in error_msg:
+            return "syntax_error"
+        elif "AssertionError" in error_msg or "logic" in msg_lower:
+            return "logic_error"
+        
+        # Code quality (5 classes) - from evolution tasks
+        elif "complexity" in msg_lower or "nested" in msg_lower or "evolve_quality" in error_msg:
+            return "complexity_reduction"
+        elif "naming" in msg_lower or "variable" in msg_lower:
+            return "naming_improvement"
+        elif "duplication" in msg_lower or "dry" in msg_lower or "repeated" in msg_lower:
+            return "code_duplication"
+        elif "solid" in msg_lower or "single responsibility" in msg_lower or "Quality Refactor" in error_msg:
+            return "maintainability"
+        elif "readability" in msg_lower or "documentation" in msg_lower:
+            return "readability"
+        
+        # Architecture (3 classes)
+        elif "pattern" in msg_lower or "factory" in msg_lower or "strategy" in msg_lower:
+            return "design_pattern"
+        elif "coupling" in msg_lower or "dependency" in msg_lower or "injection" in msg_lower:
+            return "dependency_management"
+        elif "god class" in msg_lower or "modularity" in msg_lower or "separation" in msg_lower:
+            return "modularity"
+        
+        # Security (2 classes)
+        elif "sql" in msg_lower or "xss" in msg_lower or "injection" in msg_lower or "Security" in error_msg or "evolve_security" in error_msg:
+            return "injection_prevention"
+        elif "secret" in msg_lower or "password" in msg_lower or "credential" in msg_lower or "hardcoded" in msg_lower:
+            return "secret_management"
+        
+        # Performance & Type Safety (2 classes)
+        elif "Performance" in error_msg or "evolve_perf" in error_msg or "optimization" in msg_lower:
+            return "performance_optimization"
+        elif "type hint" in msg_lower or "mypy" in msg_lower or "evolve_types" in error_msg or "Type Safety" in error_msg:
+            return "type_safety"
+        
+        # Default: complexity reduction (most common quality improvement)
+        else:
+            return "complexity_reduction"
 
     def learn_from_fixes(self):
         """Step 5: Learn from all successful fixes"""
@@ -416,11 +572,11 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
         
         if os.path.exists(model_path):
             try:
-                model = CodeGraphGCN(num_node_features=800, hidden_channels=256, num_classes=5, num_layers=4)
+                model = CodeGraphGCN(num_node_features=800, hidden_channels=256, num_classes=20, num_layers=4)
                 model.load_state_dict(torch.load(model_path))
                 return model
             except: pass
-        return CodeGraphGCN(num_node_features=800, hidden_channels=256, num_classes=5, num_layers=4)
+        return CodeGraphGCN(num_node_features=800, hidden_channels=256, num_classes=20, num_layers=4)
 
     def _save_model(self):
         import os
@@ -430,6 +586,12 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
         
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         torch.save(self.model.state_dict(), model_path)
+        
+        # Save learner state
+        if hasattr(self, 'learner'):
+            learner_path = project_root / "models" / "online_learner_state.pt"
+            self.learner.save_checkpoint(learner_path)
+            
         self._save_learning_history()
 
     def _save_learning_history(self):
@@ -475,21 +637,21 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
             
             # Prepare batch for model
             from torch_geometric.data import Batch
-            batch = Batch.from_data_list([graph_data])
             
-            self.model.eval()
-            with torch.no_grad():
-                # Forward pass (simplified for now, assuming model structure)
-                # We need to handle the specific inputs the model expects
-                # For now, let's just try to run it if we can, or skip if complex
-                pass 
-                # TODO: Fully implement inference. For now, returning placeholder
-                # to avoid breaking flow if model inputs mismatch.
-                # Real implementation would be:
-                # logits = self.model(batch.x, batch.edge_index, batch.batch, ...)
-                # pred = logits.argmax(dim=1)
+            # Ensure graph_data has batch attribute
+            if not hasattr(graph_data, 'batch') or graph_data.batch is None:
+                graph_data.batch = torch.zeros(graph_data.x.size(0), dtype=torch.long)
                 
-            return "GNN Analysis: Code structure analyzed. (Inference pending full integration)"
+            self.model.eval()
+            
+            # Get health score using the new predict_health method
+            health_score = self.model.predict_health(graph_data)
+            
+            # Interpret score
+            health_status = "Healthy" if health_score < 0.5 else "Unhealthy"
+            confidence = abs(health_score - 0.5) * 2  # 0.5 -> 0%, 0.0/1.0 -> 100%
+            
+            return f"GNN Analysis: Code Health Score {health_score:.2f} ({health_status}, Confidence: {confidence:.0%})"
         except Exception as e:
             logger.warning(f"Failed to get model insight: {e}")
             return "AI Insight unavailable due to error"
@@ -845,9 +1007,6 @@ Return ONLY the typed Python code."""
         import pstats
         import io
         
-        profiler = cProfile.Profile()
-        profiler.enable()
-        
         start_time = time.time()
         try:
             # Run the script in a subprocess to ensure clean state
@@ -862,7 +1021,11 @@ Return ONLY the typed Python code."""
             profile_output = Path(target_path).with_suffix(".prof")
             
             cmd = [sys.executable, "-m", "cProfile", "-o", str(profile_output), target_path]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            except subprocess.TimeoutExpired:
+                logger.warning(f"Profiling timed out after 15s (likely interactive/infinite loop)")
+                return "Profiling timed out - script runs indefinitely", 15.0
             
             end_time = time.time()
             duration = end_time - start_time
@@ -974,9 +1137,10 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Propose fixes without applying them")
     parser.add_argument("--mode", choices=["fix", "evolve_perf", "evolve_quality", "evolve_security", "evolve_antibodies", "evolve_types"], default="fix", help="Operation mode")
     parser.add_argument("--benchmark", action="store_true", help="Run performance benchmark")
+    parser.add_argument("--language", choices=["python", "javascript", "typescript"], default="python", help="Target language")
     args = parser.parse_args()
     
-    fixer = UniversalFixer(dry_run=args.dry_run, mode=args.mode, benchmark_mode=args.benchmark)
+    fixer = UniversalFixer(dry_run=args.dry_run, mode=args.mode, benchmark_mode=args.benchmark, language=args.language)
     fixer.run(args.target)
 
 if __name__ == "__main__":

@@ -1,0 +1,24 @@
+def process_data(d):
+    # This function is very messy
+    x = []
+    for i in d:
+        if i > 10:
+            if i < 100:
+                x.append(i * 2)
+    
+    y = 0
+    for j in x:
+        y = y + j
+        
+    print("Result is: " + str(y))
+    return y
+
+class manager:
+    def __init__(self):
+        self.data = []
+        
+    def add(self, x):
+        self.data.append(x)
+        
+    def do_work(self):
+        return process_data(self.data)

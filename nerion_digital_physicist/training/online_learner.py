@@ -476,7 +476,7 @@ class OnlineLearner:
 
     def load_checkpoint(self, path: Path):
         """Load EWC state"""
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.fisher_dict = checkpoint['fisher_dict']
         self.optimal_params = checkpoint['optimal_params']
         self.task_count = checkpoint['task_count']
