@@ -1,49 +1,37 @@
 """
-Causal Graph for Code Understanding
+Causal Graph Data Structures
 
-Represents causal relationships in code, enabling:
-- Root cause analysis (why did X happen?)
-- Effect prediction (if I change X, what happens to Y?)
-- Counterfactual reasoning (what if X had been different?)
-
-Based on Pearl's Causal Inference framework:
-- Structural Causal Models (SCM)
-- do-calculus for interventions
-- Counterfactual reasoning with "parallel worlds"
-
-Integration with Nerion:
-- Extract causal structure from code AST
-- Track data flow dependencies
-- Model function call chains
-- Identify side effects and state changes
+Defines the core data structures for representing causal relationships in code.
+Used by CausalAnalyzer to build and query causal graphs.
 """
 from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Set, Tuple, Callable
-
-
-class CausalEdgeType(Enum):
-    """Types of causal edges"""
-    DATA_FLOW = "data_flow"              # x → y (data flows from x to y)
-    CONTROL_FLOW = "control_flow"        # if x then y
-    FUNCTION_CALL = "function_call"      # x() → y
-    STATE_CHANGE = "state_change"        # x modifies y
-    EXCEPTION_FLOW = "exception_flow"    # x raises, y catches
-    TEMPORAL = "temporal"                # x happens before y
+from typing import Dict, List, Optional, Set, Tuple, Any
 
 
 class NodeType(Enum):
     """Types of nodes in causal graph"""
-    VARIABLE = "variable"
     FUNCTION = "function"
-    CLASS = "class"
-    MODULE = "module"
+    VARIABLE = "variable"
     EXPRESSION = "expression"
     STATEMENT = "statement"
+    CONDITION = "condition"
+    LOOP = "loop"
+    EXCEPTION = "exception"
+    IMPORT = "import"
+
+
+class CausalEdgeType(Enum):
+    """Types of causal relationships"""
+    DATA_FLOW = "data_flow"          # Variable assignment/usage
+    CONTROL_FLOW = "control_flow"    # Conditional/loop control
+    FUNCTION_CALL = "function_call"  # Function invocation
+    STATE_CHANGE = "state_change"    # Mutation/side effect
+    EXCEPTION_FLOW = "exception"     # Exception propagation
+    DEPENDENCY = "dependency"        # Import/module dependency
 
 
 @dataclass
@@ -52,70 +40,36 @@ class CausalNode:
     node_id: str
     node_type: NodeType
     name: str
-
-    # Code location
     file_path: Optional[str] = None
     line_number: Optional[int] = None
-
-    # Properties
-    value: Optional[Any] = None
-    data_type: Optional[str] = None
-
-    # Metadata
-    attributes: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class CausalEdge:
-    """A causal edge between nodes"""
+    """A directed edge in the causal graph"""
     source_id: str
     target_id: str
     edge_type: CausalEdgeType
-
-    # Causal strength (0-1, higher = stronger causal relationship)
-    strength: float = 1.0
-
-    # Mechanism (how does source cause target?)
-    mechanism: Optional[str] = None
-
-    # Conditions (when does this causal relationship hold?)
-    conditions: List[str] = field(default_factory=list)
-
-    # Metadata
-    attributes: Dict[str, Any] = field(default_factory=dict)
+    mechanism: Optional[str] = None  # Human-readable explanation
+    strength: float = 1.0  # Causal strength (0-1)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class CausalGraph:
     """
-    Causal graph for code understanding.
+    Directed graph representing causal relationships in code.
 
-    Represents the causal structure of code, enabling:
-    - Dependency analysis
-    - Impact prediction
-    - Root cause identification
-    - Counterfactual reasoning
-
-    Usage:
-        >>> graph = CausalGraph()
-        >>>
-        >>> # Add nodes
-        >>> graph.add_node("x", NodeType.VARIABLE, "x")
-        >>> graph.add_node("y", NodeType.VARIABLE, "y")
-        >>>
-        >>> # Add causal edge: x causes y
-        >>> graph.add_edge("x", "y", CausalEdgeType.DATA_FLOW, strength=0.9)
-        >>>
-        >>> # Query
-        >>> causes = graph.get_causes("y")
-        >>> effects = graph.get_effects("x")
+    Supports:
+    - Root cause analysis (trace back from effects)
+    - Impact prediction (trace forward from changes)
+    - Cycle detection (circular dependencies)
+    - Causal path finding
     """
 
     def __init__(self):
-        """Initialize empty causal graph"""
         self.nodes: Dict[str, CausalNode] = {}
         self.edges: List[CausalEdge] = []
-
-        # Adjacency lists for fast lookup
         self.outgoing: Dict[str, List[CausalEdge]] = defaultdict(list)
         self.incoming: Dict[str, List[CausalEdge]] = defaultdict(list)
 
@@ -124,14 +78,18 @@ class CausalGraph:
         node_id: str,
         node_type: NodeType,
         name: str,
-        **attributes
+        file_path: Optional[str] = None,
+        line_number: Optional[int] = None,
+        **metadata
     ) -> CausalNode:
         """Add a node to the graph"""
         node = CausalNode(
             node_id=node_id,
             node_type=node_type,
             name=name,
-            attributes=attributes
+            file_path=file_path,
+            line_number=line_number,
+            metadata=metadata
         )
         self.nodes[node_id] = node
         return node
@@ -141,86 +99,104 @@ class CausalGraph:
         source_id: str,
         target_id: str,
         edge_type: CausalEdgeType,
-        strength: float = 1.0,
         mechanism: Optional[str] = None,
-        **attributes
-    ) -> CausalEdge:
-        """Add a causal edge"""
+        strength: float = 1.0,
+        **metadata
+    ) -> Optional[CausalEdge]:
+        """Add an edge to the graph"""
         if source_id not in self.nodes or target_id not in self.nodes:
-            raise ValueError(f"Nodes must exist before adding edge")
+            return None
 
         edge = CausalEdge(
             source_id=source_id,
             target_id=target_id,
             edge_type=edge_type,
-            strength=strength,
             mechanism=mechanism,
-            attributes=attributes
+            strength=strength,
+            metadata=metadata
         )
-
         self.edges.append(edge)
         self.outgoing[source_id].append(edge)
         self.incoming[target_id].append(edge)
-
         return edge
 
-    def get_causes(
+    def get_causes(self, node_id: str) -> List[CausalNode]:
+        """Get immediate causes of a node (incoming edges)"""
+        causes = []
+        for edge in self.incoming[node_id]:
+            if edge.source_id in self.nodes:
+                causes.append(self.nodes[edge.source_id])
+        return causes
+
+    def get_effects(self, node_id: str) -> List[CausalNode]:
+        """Get immediate effects of a node (outgoing edges)"""
+        effects = []
+        for edge in self.outgoing[node_id]:
+            if edge.target_id in self.nodes:
+                effects.append(self.nodes[edge.target_id])
+        return effects
+
+    def get_root_causes(
         self,
         node_id: str,
-        direct_only: bool = False,
-        edge_type: Optional[CausalEdgeType] = None
-    ) -> List[CausalNode]:
+        max_depth: int = 10
+    ) -> List[Tuple[CausalNode, int]]:
         """
-        Get causes of a node.
+        Find root causes by tracing back from node.
 
-        Args:
-            node_id: Target node
-            direct_only: Only direct causes (not transitive)
-            edge_type: Filter by edge type
-
-        Returns:
-            List of causal nodes
+        Returns list of (node, distance) tuples.
         """
-        if direct_only:
-            # Direct causes only
-            edges = self.incoming[node_id]
-            if edge_type:
-                edges = [e for e in edges if e.edge_type == edge_type]
-            return [self.nodes[e.source_id] for e in edges]
-        else:
-            # Transitive causes (all ancestors)
-            causes = set()
-            self._collect_ancestors(node_id, causes, edge_type)
-            return [self.nodes[nid] for nid in causes]
+        root_causes = []
+        visited = set()
 
-    def get_effects(
+        def trace_back(current_id: str, depth: int):
+            if depth > max_depth or current_id in visited:
+                return
+
+            visited.add(current_id)
+
+            # Get causes
+            causes = self.get_causes(current_id)
+
+            if not causes:
+                # This is a root cause
+                if current_id in self.nodes:
+                    root_causes.append((self.nodes[current_id], depth))
+            else:
+                for cause in causes:
+                    trace_back(cause.node_id, depth + 1)
+
+        trace_back(node_id, 0)
+        return root_causes
+
+    def get_all_effects(
         self,
         node_id: str,
-        direct_only: bool = False,
-        edge_type: Optional[CausalEdgeType] = None
-    ) -> List[CausalNode]:
+        max_depth: int = 10
+    ) -> List[Tuple[CausalNode, int]]:
         """
-        Get effects of a node.
+        Find all downstream effects by tracing forward from node.
 
-        Args:
-            node_id: Source node
-            direct_only: Only direct effects (not transitive)
-            edge_type: Filter by edge type
-
-        Returns:
-            List of affected nodes
+        Returns list of (node, distance) tuples.
         """
-        if direct_only:
-            # Direct effects only
-            edges = self.outgoing[node_id]
-            if edge_type:
-                edges = [e for e in edges if e.edge_type == edge_type]
-            return [self.nodes[e.target_id] for e in edges]
-        else:
-            # Transitive effects (all descendants)
-            effects = set()
-            self._collect_descendants(node_id, effects, edge_type)
-            return [self.nodes[nid] for nid in effects]
+        all_effects = []
+        visited = set()
+
+        def trace_forward(current_id: str, depth: int):
+            if depth > max_depth or current_id in visited:
+                return
+
+            visited.add(current_id)
+
+            # Get effects
+            effects = self.get_effects(current_id)
+
+            for effect in effects:
+                all_effects.append((effect, depth + 1))
+                trace_forward(effect.node_id, depth + 1)
+
+        trace_forward(node_id, 0)
+        return all_effects
 
     def find_causal_paths(
         self,
@@ -228,355 +204,89 @@ class CausalGraph:
         target_id: str,
         max_length: int = 10
     ) -> List[List[CausalNode]]:
-        """
-        Find all causal paths from source to target.
+        """Find all causal paths between two nodes"""
+        if source_id not in self.nodes or target_id not in self.nodes:
+            return []
 
-        Args:
-            source_id: Source node
-            target_id: Target node
-            max_length: Maximum path length
-
-        Returns:
-            List of paths (each path is list of nodes)
-        """
         paths = []
-        visited = set()
-        current_path = []
 
-        self._dfs_paths(source_id, target_id, visited, current_path, paths, max_length)
+        def dfs(current_id: str, path: List[CausalNode]):
+            if len(path) > max_length:
+                return
 
-        # Convert node IDs to nodes
-        return [[self.nodes[nid] for nid in path] for path in paths]
+            if current_id == target_id:
+                paths.append(path.copy())
+                return
 
-    def get_root_causes(
-        self,
-        node_id: str,
-        max_depth: int = 5
-    ) -> List[Tuple[CausalNode, int]]:
-        """
-        Find root causes (nodes with no incoming edges).
+            for edge in self.outgoing[current_id]:
+                if self.nodes.get(edge.target_id) and edge.target_id not in [n.node_id for n in path]:
+                    path.append(self.nodes[edge.target_id])
+                    dfs(edge.target_id, path)
+                    path.pop()
 
-        Args:
-            node_id: Target node
-            max_depth: Maximum search depth
+        path = [self.nodes[source_id]]
+        dfs(source_id, path)
 
-        Returns:
-            List of (root_node, distance) tuples
-        """
-        root_causes = []
-        distances = {node_id: 0}
-        queue = [(node_id, 0)]
-        visited = set()
-
-        while queue:
-            current_id, depth = queue.pop(0)
-
-            if current_id in visited or depth > max_depth:
-                continue
-
-            visited.add(current_id)
-
-            # Check if root (no incoming edges)
-            if not self.incoming[current_id]:
-                root_causes.append((self.nodes[current_id], depth))
-                continue
-
-            # Add causes to queue
-            for edge in self.incoming[current_id]:
-                if edge.source_id not in visited:
-                    queue.append((edge.source_id, depth + 1))
-                    distances[edge.source_id] = depth + 1
-
-        return root_causes
-
-    def compute_causal_impact(
-        self,
-        source_id: str,
-        target_id: str
-    ) -> float:
-        """
-        Compute causal impact of source on target.
-
-        Impact is the sum of strengths along all causal paths,
-        weighted by path length (shorter = stronger impact).
-
-        Args:
-            source_id: Source node
-            target_id: Target node
-
-        Returns:
-            Causal impact score (0-1)
-        """
-        paths = self.find_causal_paths(source_id, target_id)
-
-        if not paths:
-            return 0.0
-
-        total_impact = 0.0
-        for path in paths:
-            # Get edges along path
-            path_strength = 1.0
-            for i in range(len(path) - 1):
-                edges = [e for e in self.outgoing[path[i].node_id]
-                        if e.target_id == path[i+1].node_id]
-                if edges:
-                    path_strength *= edges[0].strength
-
-            # Weight by path length (shorter = stronger)
-            length_weight = 1.0 / len(path)
-            total_impact += path_strength * length_weight
-
-        # Normalize
-        return min(total_impact, 1.0)
+        return paths
 
     def detect_cycles(self) -> List[List[CausalNode]]:
-        """
-        Detect cycles in causal graph.
-
-        Cycles can indicate:
-        - Recursive functions
-        - Feedback loops
-        - Circular dependencies
-
-        Returns:
-            List of cycles (each cycle is list of nodes)
-        """
+        """Detect cycles in the graph"""
         cycles = []
         visited = set()
         rec_stack = set()
 
+        def dfs(node_id: str, path: List[str]):
+            visited.add(node_id)
+            rec_stack.add(node_id)
+            path.append(node_id)
+
+            for edge in self.outgoing[node_id]:
+                target = edge.target_id
+                if target not in visited:
+                    dfs(target, path)
+                elif target in rec_stack:
+                    # Found cycle
+                    cycle_start = path.index(target)
+                    cycle_nodes = [self.nodes[nid] for nid in path[cycle_start:]]
+                    cycles.append(cycle_nodes)
+
+            path.pop()
+            rec_stack.remove(node_id)
+
         for node_id in self.nodes:
             if node_id not in visited:
-                self._detect_cycle_dfs(node_id, visited, rec_stack, [], cycles)
+                dfs(node_id, [])
 
-        return [[self.nodes[nid] for nid in cycle] for cycle in cycles]
+        return cycles
 
-    def simplify_graph(
-        self,
-        min_strength: float = 0.3,
-        remove_weak_edges: bool = True
-    ) -> CausalGraph:
+    def to_pyg_edges(self) -> Tuple[List[Tuple[int, int]], List[str]]:
         """
-        Create simplified version of graph.
-
-        Removes:
-        - Weak causal edges (strength < threshold)
-        - Transitive edges (if A→B→C exists, remove A→C)
-
-        Args:
-            min_strength: Minimum edge strength to keep
-            remove_weak_edges: Remove edges below threshold
+        Convert to PyTorch Geometric edge format.
 
         Returns:
-            Simplified causal graph
+            (edge_pairs, edge_types) where edge_pairs is [(src_idx, tgt_idx), ...]
+            and edge_types is the causal type for each edge
         """
-        simplified = CausalGraph()
+        node_to_idx = {nid: i for i, nid in enumerate(self.nodes.keys())}
+        edge_pairs = []
+        edge_types = []
 
-        # Copy nodes
-        for node_id, node in self.nodes.items():
-            simplified.add_node(
-                node_id=node.node_id,
-                node_type=node.node_type,
-                name=node.name,
-                **node.attributes
-            )
-
-        # Copy strong edges only
         for edge in self.edges:
-            if remove_weak_edges and edge.strength < min_strength:
-                continue
+            if edge.source_id in node_to_idx and edge.target_id in node_to_idx:
+                src_idx = node_to_idx[edge.source_id]
+                tgt_idx = node_to_idx[edge.target_id]
+                edge_pairs.append((src_idx, tgt_idx))
+                edge_types.append(edge.edge_type.value)
 
-            simplified.add_edge(
-                source_id=edge.source_id,
-                target_id=edge.target_id,
-                edge_type=edge.edge_type,
-                strength=edge.strength,
-                mechanism=edge.mechanism,
-                **edge.attributes
-            )
-
-        return simplified
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export graph to dictionary"""
-        return {
-            'nodes': [
-                {
-                    'id': node.node_id,
-                    'type': node.node_type.value,
-                    'name': node.name,
-                    'file': node.file_path,
-                    'line': node.line_number,
-                    'attributes': node.attributes
-                }
-                for node in self.nodes.values()
-            ],
-            'edges': [
-                {
-                    'source': edge.source_id,
-                    'target': edge.target_id,
-                    'type': edge.edge_type.value,
-                    'strength': edge.strength,
-                    'mechanism': edge.mechanism,
-                    'attributes': edge.attributes
-                }
-                for edge in self.edges
-            ]
-        }
-
-    def get_statistics(self) -> Dict[str, Any]:
-        """Get graph statistics"""
-        # Count by node type
-        node_type_counts = defaultdict(int)
-        for node in self.nodes.values():
-            node_type_counts[node.node_type.value] += 1
-
-        # Count by edge type
-        edge_type_counts = defaultdict(int)
-        for edge in self.edges:
-            edge_type_counts[edge.edge_type.value] += 1
-
-        # Find root and leaf nodes
-        roots = [nid for nid in self.nodes if not self.incoming[nid]]
-        leaves = [nid for nid in self.nodes if not self.outgoing[nid]]
-
-        # Average degree
-        total_degree = sum(len(self.outgoing[nid]) + len(self.incoming[nid])
-                          for nid in self.nodes)
-        avg_degree = total_degree / len(self.nodes) if self.nodes else 0
-
-        return {
-            'num_nodes': len(self.nodes),
-            'num_edges': len(self.edges),
-            'node_types': dict(node_type_counts),
-            'edge_types': dict(edge_type_counts),
-            'num_roots': len(roots),
-            'num_leaves': len(leaves),
-            'avg_degree': avg_degree,
-            'cycles': len(self.detect_cycles())
-        }
-
-    # Helper methods
-
-    def _collect_ancestors(
-        self,
-        node_id: str,
-        ancestors: Set[str],
-        edge_type: Optional[CausalEdgeType]
-    ):
-        """Recursively collect all ancestors"""
-        for edge in self.incoming[node_id]:
-            if edge_type and edge.edge_type != edge_type:
-                continue
-
-            if edge.source_id not in ancestors:
-                ancestors.add(edge.source_id)
-                self._collect_ancestors(edge.source_id, ancestors, edge_type)
-
-    def _collect_descendants(
-        self,
-        node_id: str,
-        descendants: Set[str],
-        edge_type: Optional[CausalEdgeType]
-    ):
-        """Recursively collect all descendants"""
-        for edge in self.outgoing[node_id]:
-            if edge_type and edge.edge_type != edge_type:
-                continue
-
-            if edge.target_id not in descendants:
-                descendants.add(edge.target_id)
-                self._collect_descendants(edge.target_id, descendants, edge_type)
-
-    def _dfs_paths(
-        self,
-        current: str,
-        target: str,
-        visited: Set[str],
-        path: List[str],
-        all_paths: List[List[str]],
-        max_length: int
-    ):
-        """DFS to find all paths"""
-        if len(path) >= max_length:
-            return
-
-        visited.add(current)
-        path.append(current)
-
-        if current == target:
-            all_paths.append(path.copy())
-        else:
-            for edge in self.outgoing[current]:
-                if edge.target_id not in visited:
-                    self._dfs_paths(edge.target_id, target, visited, path,
-                                  all_paths, max_length)
-
-        path.pop()
-        visited.remove(current)
-
-    def _detect_cycle_dfs(
-        self,
-        node_id: str,
-        visited: Set[str],
-        rec_stack: Set[str],
-        path: List[str],
-        cycles: List[List[str]]
-    ):
-        """DFS to detect cycles"""
-        visited.add(node_id)
-        rec_stack.add(node_id)
-        path.append(node_id)
-
-        for edge in self.outgoing[node_id]:
-            neighbor = edge.target_id
-
-            if neighbor not in visited:
-                self._detect_cycle_dfs(neighbor, visited, rec_stack, path, cycles)
-            elif neighbor in rec_stack:
-                # Found cycle
-                cycle_start = path.index(neighbor)
-                cycle = path[cycle_start:]
-                cycles.append(cycle)
-
-        path.pop()
-        rec_stack.remove(node_id)
+        return edge_pairs, edge_types
 
 
-# Example usage
-def example_usage():
-    """Example of causal graph construction"""
-    graph = CausalGraph()
-
-    # Build simple causal graph for code:
-    # def process(x):
-    #     y = transform(x)
-    #     z = validate(y)
-    #     return z
-
-    # Add nodes
-    graph.add_node("x", NodeType.VARIABLE, "x")
-    graph.add_node("y", NodeType.VARIABLE, "y")
-    graph.add_node("z", NodeType.VARIABLE, "z")
-    graph.add_node("transform", NodeType.FUNCTION, "transform")
-    graph.add_node("validate", NodeType.FUNCTION, "validate")
-
-    # Add causal edges
-    graph.add_edge("x", "transform", CausalEdgeType.DATA_FLOW, strength=1.0)
-    graph.add_edge("transform", "y", CausalEdgeType.DATA_FLOW, strength=1.0)
-    graph.add_edge("y", "validate", CausalEdgeType.DATA_FLOW, strength=1.0)
-    graph.add_edge("validate", "z", CausalEdgeType.DATA_FLOW, strength=1.0)
-
-    # Query graph
-    print("Causes of z:", [n.name for n in graph.get_causes("z")])
-    print("Effects of x:", [n.name for n in graph.get_effects("x")])
-    print("Root causes of z:", [(n.name, d) for n, d in graph.get_root_causes("z")])
-    print("Causal impact x→z:", graph.compute_causal_impact("x", "z"))
-
-    # Statistics
-    stats = graph.get_statistics()
-    print(f"\nGraph statistics: {stats}")
-
-
-if __name__ == "__main__":
-    example_usage()
+# Edge type to index mapping for one-hot encoding
+CAUSAL_EDGE_TYPE_TO_INDEX: Dict[str, int] = {
+    CausalEdgeType.DATA_FLOW.value: 0,
+    CausalEdgeType.CONTROL_FLOW.value: 1,
+    CausalEdgeType.FUNCTION_CALL.value: 2,
+    CausalEdgeType.STATE_CHANGE.value: 3,
+    CausalEdgeType.EXCEPTION_FLOW.value: 4,
+    CausalEdgeType.DEPENDENCY.value: 5,
+}

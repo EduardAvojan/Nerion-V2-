@@ -1,14 +1,61 @@
 # Nerion Project - Operational Guide
 
-**Last Updated:** October 30, 2025
+**Last Updated:** November 24, 2025
 **Timezone:** Los Angeles, Pacific Standard Time (PST/PDT)
-**IMPORTANT:** All timestamps in CHANGELOG.md and communication MUST use PST/PDT timezone.
 
 ---
 
-## 🚨 CRITICAL: MANDATORY DECISION-MAKING PROTOCOL
+## CRITICAL: REASONING AND PLANNING PROTOCOL
 
-**HIGHEST PRIORITY RULE - ALWAYS FOLLOW BEFORE ANY IMPLEMENTATION:**
+You are a very strong reasoner and planner. Use these critical instructions to structure your plans, thoughts, and responses.
+
+Before taking any action (either tool calls or responses to the user), you must proactively, methodically, and independently plan and reason about:
+
+1. **Logical dependencies and constraints:** Analyze the intended action against the following factors. Resolve conflicts in order of importance:
+   - 1.1: Policy-based rules, mandatory prerequisites, and constraints.
+   - 1.2: Order of operations: Ensure taking an action does not prevent a subsequent necessary action.
+     - 1.2.1: The user may request actions in a random order, but you may need to reorder operations to maximize successful completion of the task.
+   - 1.3: Other prerequisites (information and/or actions needed).
+   - 1.4: Explicit user constraints or preferences.
+
+2. **Risk assessment:** What are the consequences of taking the action? Will the new state cause any future issues?
+   - 2.1: For exploratory tasks (like searches), missing optional parameters is a LOW risk. Prefer calling the tool with the available information over asking the user, unless your 'Rule 1' (Logical Dependencies) reasoning determines that optional information is required for a later step in your plan.
+
+3. **Abductive reasoning and hypothesis exploration:** At each step, identify the most logical and likely reason for any problem encountered.
+   - 3.1: Look beyond immediate or obvious causes. The most likely reason may not be the simplest and may require deeper inference.
+   - 3.2: Hypotheses may require additional research. Each hypothesis may take multiple steps to test.
+   - 3.3: Prioritize hypotheses based on likelihood, but do not discard less likely ones prematurely. A low-probability event may still be the root cause.
+
+4. **Outcome evaluation and adaptability:** Does the previous observation require any changes to your plan?
+   - 4.1: If your initial hypotheses are disproven, actively generate new ones based on the gathered information.
+
+5. **Information availability:** Incorporate all applicable and alternative sources of information, including:
+   - 5.1: Using available tools and their capabilities
+   - 5.2: All policies, rules, checklists, and constraints
+   - 5.3: Previous observations and conversation history
+   - 5.4: Information only available by asking the user
+
+6. **Precision and Grounding:** Ensure your reasoning is extremely precise and relevant to each exact ongoing situation.
+   - 6.1: Verify your claims by quoting the exact applicable information (including policies) when referring to them.
+
+7. **Completeness:** Ensure that all requirements, constraints, options, and preferences are exhaustively incorporated into your plan.
+   - 7.1: Resolve conflicts using the order of importance in #1.
+   - 7.2: Avoid premature conclusions: There may be multiple relevant options for a given situation.
+     - 7.2.1: To check for whether an option is relevant, reason about all information sources from #5.
+     - 7.2.2: You may need to consult the user to even know whether something is applicable. Do not assume it is not applicable without checking.
+   - 7.3: Review applicable sources of information from #5 to confirm which are relevant to the current state.
+
+8. **Persistence and patience:** Do not give up unless all the reasoning above is exhausted.
+   - 8.1: Don't be dissuaded by time taken or user frustration.
+   - 8.2: This persistence must be intelligent: On transient errors (e.g. please try again), you must retry unless an explicit retry limit (e.g., max x tries) has been reached. If such a limit is hit, you must stop. On other errors, you must change your strategy or args, not repeat the failed call.
+
+9. **Inhibit your response:** Only take an action after all the above reasoning is completed. Once you've taken an action, you cannot take it back.
+
+10. **Always clean up** after your temporary file or script or testing creations.
+
+---
+
+## DECISION-MAKING PROTOCOL
 
 When the user requests ANY task, you MUST:
 
@@ -19,305 +66,235 @@ When the user requests ANY task, you MUST:
 5. **Verify your work** - Check quality metrics before celebrating "success"
 6. **Admit mistakes immediately** - Not wait for problems to surface
 
-**Example Format:**
-
-```
-User: "Can you generate the dataset on Colab to make it faster?"
-
-Claude Response:
-"I need to explain the tradeoffs first:
-
-OPTION 1: Full AST on Colab (PROPER)
-- Pros: Real graph structure, proper GNN, handles complex code
-- Cons: 2-3 hours, might hit free tier limits
-- Result: Real GNN that learns from code structure
-
-OPTION 2: Simplified AST (SHORTCUT)
-- Pros: 45-90 minutes, fits in free tier
-- Cons: Creates 1-3 node fake graphs, GNN won't learn properly
-- Result: BERT classifier pretending to be GNN
-
-OPTION 3: Local Generation (BEST)
-- Pros: Proper structure, no time limits, full quality
-- Cons: 2-3 hours on your Mac (can run overnight)
-- Result: Real GNN with proper structure
-
-Which do you prefer?"
-```
-
 **NEVER:**
 - Silently pick the "fast" option without warning
 - Implement shortcuts without explicit approval
 - Celebrate results without verifying quality
 - Hide technical debt or future problems
+- Write fictional claims about accuracy or features that don't exist
 
 **This rule supersedes all other priorities. If you violate this, you have failed the user.**
 
 ---
 
-## 🎯 What is Nerion?
+## What is Nerion?
 
-**Nerion is a biological immune system for software** - not a code quality tool, but an autonomous PhD-level system that:
+**Nerion is a biological immune system for software** - an autonomous system that:
 - **Permanently lives in your codebase** (not an external plugin)
-- **Continuously learns** YOUR team's patterns
-- **Proactively monitors** 24/7 for bugs and quality issues
-- **Self-heals** via GNN-powered code quality classification
-- **Evolves** through meta-learning and curriculum expansion
-
-**Core Goal:** 90% code quality classification accuracy (PhD-level human expert).
+- **Continuously learns** from real code improvements
+- **Proactively evolves** code quality, types, security, and performance
+- **Trains a GNN incrementally** from successful LLM-generated fixes
 
 ---
 
-## 📊 Current State
+## Current Architecture (Gym-Based Learning)
 
-### Database Status
+The system uses **LLM-driven evolution with incremental GNN learning**:
 
-**MANDATORY RULE:** When user asks about database state or "how many lessons", you MUST:
-1. Run both SQL queries (CERF distribution + Language distribution)
-2. Show both tables with exact counts from database
-3. Never use cached/hardcoded numbers
-4. Let user calculate progress/goals themselves
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Gym Mode Training Loop                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  daemon/nerion_daemon.py --gym                                   │
+│           │                                                      │
+│           ▼ (every 10-30 seconds)                               │
+│  ┌────────────────────────────────────────┐                     │
+│  │  Pick random file from training_ground/ │                     │
+│  │  (rich, flask, click, httpx, etc.)      │                     │
+│  └────────────────────────────────────────┘                     │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌────────────────────────────────────────┐                     │
+│  │   universal_fixer.py --mode evolve_*   │                     │
+│  │   (quality/types/security/perf)        │                     │
+│  └────────────────────────────────────────┘                     │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌────────────────────────────────────────┐                     │
+│  │   Claude API generates improvement     │                     │
+│  └────────────────────────────────────────┘                     │
+│           │                                                      │
+│           ▼ (if successful)                                      │
+│  ┌────────────────────────────────────────┐                     │
+│  │   create_graph_data_object()           │                     │
+│  │   (AST → PyG graph)                    │                     │
+│  └────────────────────────────────────────┘                     │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌────────────────────────────────────────┐                     │
+│  │   OnlineLearner.incremental_update()   │                     │
+│  │   - EWC prevents catastrophic forgetting│                     │
+│  │   - Fisher Information Matrix          │                     │
+│  └────────────────────────────────────────┘                     │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌────────────────────────────────────────┐                     │
+│  │   EpisodicMemory stores experience     │                     │
+│  │   Dream cycle extracts principles      │                     │
+│  └────────────────────────────────────────┘                     │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-All lessons are 100% CERF-labeled, validated, and executable.
-
-### System Status
-**✅ Fully Operational:**
-- Multi-language support (10 languages)
-- 7 lesson generator agents (A1, A2, B1, B2, C1, C2, python-framework)
-- Safe lesson workflow with quality review
-- Mission Control GUI (Electron app)
-- Voice interface (STT/TTS/PTT)
-- Self-coding engine with safety policies
-- Memory systems
-- GNN training pipeline (GraphSAGE 58.9% accuracy)
-
-**🔄 In Development:**
-- GNN accuracy improvement (58.9% → 90% target)
-- Curriculum expansion (1,180 → 5,000 lessons)
-- Phase 1 semantic embeddings (CodeBERT integration)
+### Key Insight
+Previous approach (synthetic curriculum → GNN training) maxed out at **61.85% accuracy**.
+Current approach: Learn incrementally from **real LLM fixes on real open source code**.
 
 ---
 
-## 🔒 SAFE LESSON GENERATION WORKFLOW (CRITICAL)
+## Current State
 
-**This is the ONLY correct way to generate lessons.** Prevents duplicates and protects main database.
-
-### Step 1: Prepare Workspace
+### Training Status
+Check live status with the gym monitor:
 ```bash
-python3 safe_lesson_workflow.py prepare
+python scripts/gym_monitor.py
 ```
-- Copies `out/learning/curriculum.sqlite` (1,180 lessons) → `agent_generated_curriculum.sqlite`
-- Agents can now check for duplicates before generating
-- Main DB is READ-ONLY (never modified directly)
 
-### Step 2: Activate Agent
-Use Task tool to activate desired agent:
-- `cerf-a1-programming-lesson-generator`
-- `cerf-a2-programming-lesson-generator`
-- `cerf-b1-programming-lesson-generator`
-- `cerf-b2-programming-lesson-generator`
-- `cerf-c1-programming-lesson-generator`
-- `cerf-c2-programming-lesson-generator`
-- `python-framework-lesson-generator` (NumPy, Pandas, Flask, FastAPI, SQLAlchemy)
+Key metrics stored in `/Users/ed/Nerion-V2/models/`:
+- `online_learner_state.pt` - GNN checkpoint with EWC state
+- `nerion_immune_brain.pt` - Current trained brain
+- `learning_history.json` - Raw learning examples
 
-Agent writes NEW lessons to workspace (existing + new).
+Episodic memory at `/Users/ed/Nerion-V2/data/episodic_memory/`
 
-### Step 3: Review Quality
-```bash
-python3 safe_lesson_workflow.py review
-```
-**Automated quality checks:**
-- No placeholder variables (CODE, TEST_TYPE, BEFORE_CODE, AFTER_CODE)
-- Test code has imports/functions
-- Code not trivially short (<20 chars)
-- before_code ≠ after_code
-- All required fields present
+### Training Ground
+Real open source projects in `training_ground/`:
+- rich, flask, click, httpx, lodash, requests, express
 
-**If review FAILS:** Fix agent prompt and regenerate. Do NOT merge.
-
-### Step 4: Merge New Lessons
-```bash
-python3 safe_lesson_workflow.py merge
-```
-- Reads ALL lessons from workspace
-- SafeCurriculumDB rejects duplicates automatically (name + SHA256 content hash)
-- Only NEW lessons added to main DB
-- Automatic backup created before merge
-
-### Step 5: Cleanup
-```bash
-python3 safe_lesson_workflow.py cleanup
-```
-- Deletes workspace database
-- Main DB verified intact
-
-### Safety Guarantees
-- Main DB never at risk (read-only during prepare)
-- Automatic duplicate detection (name + content hash)
-- No copies left behind (workspace deleted after cleanup)
-- Quality gate prevents broken lessons from entering production
-- Automatic backups before every merge
+### Evolution Vectors
+- `evolve_quality` - Code quality improvements (weighted higher)
+- `evolve_types` - Type annotation additions
+- `evolve_security` - Security hardening
+- `evolve_perf` - Performance optimization
 
 ---
 
-## 🗂️ File Structure
+## File Structure
 
 ```
 /Users/ed/Nerion-V2/
-├── app/                           # Application layer
-│   ├── chat/                      # Chat engine, voice, intents
-│   ├── parent/                    # Task planning system
-│   ├── ui/holo-app/               # Mission Control Electron app
-│   ├── api/                       # REST API, terminal server
-│   └── learning/                  # Upgrade agent
+├── daemon/
+│   └── nerion_daemon.py          # Immune system daemon (--gym mode)
 │
-├── selfcoder/                     # Self-modification engine
-│   ├── planner/                   # Plan generation
-│   ├── actions/                   # Code modification primitives
-│   ├── ast_editor/                # AST-based editing
-│   ├── policy/                    # Safety policies
-│   ├── security/                  # Malicious code detection
-│   └── learning/                  # Behavioral coach
-│
-├── nerion_digital_physicist/      # GNN deep learning
+├── nerion_digital_physicist/
+│   ├── universal_fixer.py        # Main LLM-powered fixer (984 lines)
 │   ├── agent/
-│   │   ├── brain.py               # GNN architectures
-│   │   ├── data.py                # AST → Graph
-│   │   └── semantics.py           # CodeBERT embeddings
+│   │   ├── brain.py              # GNN architectures (GCN, SAGE, GAT, GIN)
+│   │   ├── data.py               # Code → PyG graph conversion
+│   │   └── semantics.py          # CodeBERT/GraphCodeBERT embeddings
 │   ├── training/
-│   │   ├── run_training.py        # Training loop
-│   │   └── dataset_builder.py    # Curriculum → PyTorch
-│   └── db/
-│       └── safe_curriculum.py     # Database wrapper
+│   │   └── online_learner.py     # EWC incremental learning
+│   └── memory/
+│       └── episodic_memory.py    # Experience storage & consolidation
 │
-├── voice/                         # Voice interface (STT/TTS/PTT)
-├── daemon/                        # Immune system daemon (24/7)
-├── config/                        # Configuration (tools.yaml, intents.yaml)
+├── training_ground/              # Real OSS projects for training
+│   ├── rich/
+│   ├── flask/
+│   ├── click/
+│   ├── httpx/
+│   ├── lodash/
+│   ├── requests/
+│   └── express/
 │
-├── out/                           # Runtime data
-│   ├── learning/
-│   │   └── curriculum.sqlite      # 1,180 validated lessons
-│   └── training_runs/             # GNN training history
+├── models/                       # Model checkpoints
+│   ├── online_learner_state.pt   # EWC learner state
+│   ├── nerion_immune_brain.pt    # Current brain weights
+│   └── learning_history.json     # Training examples log
 │
-├── .claude/agents/                # 7 lesson generator agents
-├── safe_lesson_workflow.py        # Lesson generation workflow
-├── digital_physicist_brain.pt     # Current GNN weights
-├── CLAUDE.md                      # This file (operational rules)
-└── CHANGELOG.md                   # History (7-day rolling window)
+├── data/
+│   └── episodic_memory/          # Experience episodes
+│
+├── app/                          # Application layer (chat, UI, voice)
+├── selfcoder/                    # Self-modification engine
+├── voice/                        # Voice interface (STT/TTS)
+├── config/                       # Configuration files
+│
+├── CLAUDE.md                     # This file
+└── CHANGELOG.md                  # Rolling 7-day history
 ```
 
 ---
 
-## 🎮 Quick Commands
+## Quick Commands
 
-### Lesson Generation
+### Start Gym Training
 ```bash
-# Generate 30 A1 lessons
-python3 safe_lesson_workflow.py prepare
-# Activate agent via Task tool: cerf-a1-programming-lesson-generator
-python3 safe_lesson_workflow.py review
-python3 safe_lesson_workflow.py merge
-python3 safe_lesson_workflow.py cleanup
+cd /Users/ed/Nerion-V2
+python daemon/nerion_daemon.py --gym
 ```
 
-### Database Queries
-
-**MANDATORY RULE:** When user asks "how many lessons" or about database state, you MUST:
-1. Query database directly (never guess or use cached numbers)
-2. Show BOTH tables: CERF distribution + Language distribution
-3. Show exact numbers from database, not approximations
-
+### Monitor Gym Progress
 ```bash
-# Table 1: CERF distribution
-sqlite3 out/learning/curriculum.sqlite "SELECT focus_area, COUNT(*) as count FROM lessons WHERE focus_area IN ('A1', 'A2', 'B1', 'B2', 'C1', 'C2') GROUP BY focus_area ORDER BY focus_area;"
-
-# Table 2: Language distribution
-sqlite3 out/learning/curriculum.sqlite "SELECT language, COUNT(*) as count FROM lessons GROUP BY language ORDER BY count DESC;"
-
-# Total count
-sqlite3 out/learning/curriculum.sqlite "SELECT COUNT(*) FROM lessons;"
+python scripts/gym_monitor.py
 ```
 
-### GNN Training
+### Run Single Evolution
 ```bash
-# Train GraphSAGE with current dataset
-python3 -m nerion_digital_physicist.training.run_training \
-  --dataset experiments/datasets/gnn/final_complete/supervised/*/dataset.pt \
-  --architecture sage \
-  --epochs 50 \
-  --batch-size 32
+python nerion_digital_physicist/universal_fixer.py <file> --mode evolve_quality --language python
 ```
 
-### Mission Control GUI
+### Check Model State
 ```bash
-cd app/ui/holo-app
-npm run dev  # Development mode
-# OR
-npm run build && open ../../Nerion.app  # Production
-```
-
-### Voice Interface
-```bash
-python3 -m app.chat.engine --voice --profile whisper_fast
-# Press Ctrl+Space for push-to-talk
+ls -la models/
+python3 -c "import torch; m=torch.load('models/online_learner_state.pt', map_location='cpu'); print(f'Tasks: {m.get(\"task_count\", \"?\")}')"
 ```
 
 ---
 
-## 📝 Maintenance Guidelines
+## Historical Context
+
+### What Was Tried (and abandoned)
+1. **Synthetic curriculum** - Generated 1,180 lessons with CERF levels
+2. **CodeNet pretraining** - Used Microsoft CodeNet dataset
+3. **Various GNN architectures** - GraphSAGE, GCN, GAT, GIN
+4. **Best achieved**: 61.85% validation accuracy (October 2025)
+
+### Why It Didn't Work
+- Synthetic lessons don't capture real-world code complexity
+- Limited diversity in training data
+- Gap between curriculum and production code
+
+### Current Approach
+- Learn from **real** open source code (rich, flask, etc.)
+- Use Claude API to generate **actual** improvements
+- Train GNN incrementally on successful fixes
+- EWC prevents forgetting previous learning
+- Episodic memory consolidates patterns into principles
+
+---
+
+## Environment Variables
+
+```bash
+# .env file
+ANTHROPIC_API_KEY=<your_key>      # For Claude API (universal_fixer)
+NERION_V2_GEMINI_KEY=<your_key>   # For embeddings (optional)
+```
+
+---
+
+## Maintenance Guidelines
 
 ### CLAUDE.md (This File)
-**Purpose:** Timeless operational rules for Claude to operate Nerion effectively.
+**Purpose:** Accurate operational state for Claude.
 
-**Update when:**
-- Core capabilities change
-- Database state significantly changes
-- Critical workflows change
-- File structure changes
-
-**Do NOT include:**
-- Historical events (use CHANGELOG.md)
-- In-progress work (use CHANGELOG.md)
-- Detailed technical specs (doesn't change often)
-- Use cases or examples (educational, not operational)
+**Rules:**
+- Only document what ACTUALLY exists (verify with ls, cat, grep)
+- Never claim accuracy numbers without checking model metadata
+- Update when architecture changes
+- Remove outdated sections
 
 ### CHANGELOG.md
 **Purpose:** Rolling 7-day history of confirmed changes.
 
 **Rules:**
-- ✅ **ONLY add AFTER change is tested and working**
-- ✅ Include timestamp (YYYY-MM-DD HH:MM PDT/PST) - **MUST use Pacific Time**
-- ✅ Use types: ADD, UPDATE, REMOVE, FIX, REFACTOR
-- ✅ **Delete entries older than 7 days** (keep it lean)
-- ❌ Do NOT add experimental/in-progress work
-- ❌ Do NOT add failed attempts
-
-**When to update:**
-- After completing and testing any feature
-- After fixing and verifying any bug
-- After making and confirming any refactor
-- When current work status changes
-
-### Quality Control
-- **CHANGELOG.md = Factual recent history** (7-day window)
-- **CLAUDE.md = Operational rules** (timeless)
-- **If you create temporary scripts:** Delete them when done
-- **If you create documentation:** Check if existing file can be updated instead
+- ONLY add AFTER change is tested and working
+- Include timestamp (YYYY-MM-DD HH:MM PST/PDT)
+- Delete entries older than 7 days
+- Do NOT add fictional or planned features
 
 ---
 
-## 🔧 Environment Variables
-
-```bash
-# .env file
-NERION_V2_GEMINI_KEY=<your_key>        # For embeddings/chat
-CLAUDE_API_KEY=<your_key>              # For chat
-DEEPSEEK_API_KEY=<your_key>            # For chat
-NERION_SEMANTIC_PROVIDER=codebert      # or "gemini"
-```
-
----
-
-*CLAUDE.md = Operational rules for Claude*
-*CHANGELOG.md = Recent history (7-day rolling window)*
-*See CHANGELOG.md for current work and recent changes*
+*Last verified: November 24, 2025*
+*Verified by: Exploring actual codebase, checking real model files*

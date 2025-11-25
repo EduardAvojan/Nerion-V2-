@@ -22,6 +22,9 @@ from typing import Dict, Any, Optional, Tuple, List
 
 from selfcoder.planner.explainable_planner import ExplainablePlanner
 from nerion_digital_physicist.training.online_learner import OnlineLearner
+from nerion_digital_physicist.training.maml import MAMLTrainer, MAMLConfig, MAMLTask
+from nerion_digital_physicist.infrastructure.production_collector import ProductionFeedbackCollector, ProductionBug
+from nerion_digital_physicist.infrastructure.memory import ReplayStore
 from nerion_digital_physicist.agent.data import create_graph_data_object
 from nerion_digital_physicist.agent.semantics import get_global_embedder
 import torch
@@ -45,15 +48,16 @@ class ExecutionError:
         self.error_type = error_type
 
 class UniversalFixer:
-    def __init__(self, enable_learning: bool = True, dry_run: bool = False, mode: str = "fix", benchmark_mode: bool = False):
+    def __init__(self, enable_learning: bool = True, dry_run: bool = False, mode: str = "fix", benchmark_mode: bool = False, enable_maml: bool = True):
         self.planner = ExplainablePlanner(min_confidence_for_execution=0.7)
         self.fixes_applied = []
         self.enable_learning = enable_learning
+        self.enable_maml = enable_maml
         self.dry_run = dry_run
         self.mode = mode
         self.benchmark_mode = benchmark_mode
         self.embedder = get_global_embedder()
-        
+
         # Initialize the learning system
         if enable_learning:
             try:
@@ -67,14 +71,74 @@ class UniversalFixer:
                     'import_error': 3,
                     'other': 4
                 }
+
+                # Initialize MAML for few-shot adaptation (Phase 3)
+                if enable_maml:
+                    self._init_maml()
+
+                # Initialize surprise-weighted replay (Phase 4)
+                self._init_surprise_replay()
+
                 logger.info("🧠 Learning mode ENABLED - Will learn from successful fixes")
             except Exception as e:
                 logger.warning(f"Could not initialize OnlineLearner: {e}")
                 self.enable_learning = False
+
+        # Track examples by error type for MAML task creation
+        self.error_type_examples: Dict[str, List[Tuple[Any, int]]] = {
+            'attribute_error': [],
+            'type_error': [],
+            'assertion_error': [],
+            'import_error': [],
+            'other': []
+        }
+
+    def _init_maml(self):
+        """Initialize MAML trainer for few-shot adaptation"""
+        try:
+            self.maml_config = MAMLConfig(
+                inner_lr=0.01,
+                inner_steps=3,  # Few steps for quick adaptation
+                meta_batch_size=4,
+                support_size=3,
+                query_size=5,
+                first_order=True,  # FOMAML for efficiency
+            )
+            self.maml_trainer = MAMLTrainer(self.model, self.maml_config)
+            self.maml_checkpoint_path = Path(__file__).parent.parent / "models" / "maml_checkpoint.pt"
+
+            # Load existing MAML checkpoint if available
+            if self.maml_checkpoint_path.exists():
+                self.maml_trainer.load_checkpoint(self.maml_checkpoint_path)
+                logger.info("📚 MAML checkpoint loaded for few-shot adaptation")
+
+            logger.info("🎯 MAML initialized for few-shot learning")
+        except Exception as e:
+            logger.warning(f"Could not initialize MAML: {e}")
+            self.enable_maml = False
+
+    def _init_surprise_replay(self):
+        """Initialize surprise-weighted replay buffer (Phase 4)"""
+        try:
+            replay_path = Path(__file__).parent.parent / "data" / "replay"
+            self.replay_store = ReplayStore(storage_path=replay_path)
+            self.feedback_collector = ProductionFeedbackCollector(
+                replay_store=self.replay_store,
+                model=self.model,
+            )
+            logger.info("🎲 Surprise-weighted replay initialized")
+        except Exception as e:
+            logger.warning(f"Could not initialize surprise replay: {e}")
+            self.feedback_collector = None
         
     def detect_errors(self, target_path: str) -> List[ExecutionError]:
-        """Step 1: Run the target (script or test) and detect failures"""
+        """Step 1: Run the target (script, test file, or directory) and detect failures"""
         target_path_obj = Path(target_path)
+        
+        # If it's a directory, assume it's a test suite and run pytest
+        if target_path_obj.is_dir():
+            return self._run_pytest(target_path)
+            
         is_test = target_path.endswith(".py") and ("test_" in target_path or "_test" in target_path)
         
         if is_test:
@@ -117,12 +181,20 @@ class UniversalFixer:
         file_path = script_path
         line_num = 0
         
+        # Check for SyntaxError which might not have "Traceback" header
+        is_syntax_error = "SyntaxError:" in stderr or "IndentationError:" in stderr
+        
         in_traceback = False
         for line in lines:
             if "Traceback (most recent call last):" in line:
                 in_traceback = True
                 traceback_lines = [line]
                 continue
+            
+            # If it's a syntax error, we treat the whole output as relevant
+            if is_syntax_error and line.strip().startswith("File "):
+                in_traceback = True
+                traceback_lines.append(line)
             
             if in_traceback:
                 traceback_lines.append(line)
@@ -141,16 +213,24 @@ class UniversalFixer:
                 
                 # The last line usually contains the Error Type and Message
                 if not line.startswith(" ") and ":" in line:
-                    error_type, error_msg = line.split(":", 1)
-                    error_type = error_type.strip()
-                    error_msg = error_msg.strip()
+                    parts = line.split(":", 1)
+                    if len(parts) == 2:
+                        possible_type = parts[0].strip()
+                        if "Error" in possible_type or "Exception" in possible_type:
+                            error_type = possible_type
+                            error_msg = parts[1].strip()
         
-        if in_traceback:
+        if in_traceback or is_syntax_error:
+            # If we didn't find a specific error type but know it failed, default to Runtime Error
+            if error_type == "Unknown" and is_syntax_error:
+                error_type = "SyntaxError"
+                error_msg = "Syntax or Indentation Error detected"
+                
             errors.append(ExecutionError(
                 file_path=file_path,
                 line_num=line_num,
                 error_msg=f"{error_type}: {error_msg}",
-                traceback="\n".join(traceback_lines),
+                traceback="\n".join(traceback_lines) if traceback_lines else stderr,
                 error_type=error_type
             ))
             
@@ -365,7 +445,7 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
     def learn_from_fixes(self):
         """Step 5: Learn from all successful fixes"""
         if not self.enable_learning or not self.learning_examples: return
-        
+
         logger.info(f"♾️  Learning from {len(self.learning_examples)} successful fixes")
         try:
             training_data = []
@@ -374,21 +454,158 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
                 error_type = example['error_type']
                 label = self.error_to_label.get(error_type, 4)
                 training_data.append((graph, label))
-            
+
+                # Track examples by error type for MAML (Phase 3)
+                if error_type in self.error_type_examples:
+                    self.error_type_examples[error_type].append((graph, label))
+
+                # Record in surprise-weighted replay buffer (Phase 4)
+                self._record_surprise_experience(example, graph, label)
+
+            # Get surprise-weighted replay samples to mix with new data
+            replay_data = self._get_surprise_replay_samples()
+
             updated_model, update_info = self.learner.incremental_update(
                 current_model=self.model,
-                new_data=training_data
+                new_data=training_data,
+                replay_data=replay_data  # Use surprise-weighted samples
             )
             self.model = updated_model
             self._save_model()
             logger.info(f"✅ GNN updated: accuracy={update_info.new_accuracy:.2%}")
+
+            # Periodically run MAML meta-training if we have enough examples
+            if self.enable_maml:
+                self._maybe_run_maml_update()
+
         except Exception as e:
             logger.error(f"Error during learning: {e}")
+
+    def _record_surprise_experience(self, example: Dict[str, Any], graph: Any, label: int):
+        """Record experience with surprise score for prioritized replay"""
+        if not hasattr(self, 'feedback_collector') or self.feedback_collector is None:
+            return
+
+        try:
+            bug = ProductionBug(
+                bug_id=f"fix_{time.time()}",
+                source_code=example.get('original_code', ''),
+                file_path=example.get('file_path', 'unknown'),
+                language='python',
+                bug_type=example.get('error_type', 'other'),
+                severity='medium',
+                ground_truth=label
+            )
+            surprise = self.feedback_collector.collect_bug(bug, graph, ground_truth=label)
+            if surprise > 0.7:
+                logger.info(f"⚠️  High surprise ({surprise:.2f}) - prioritizing this example")
+        except Exception as e:
+            logger.debug(f"Could not record surprise experience: {e}")
+
+    def _get_surprise_replay_samples(self, k: int = 50) -> List[Tuple[Any, int]]:
+        """Get high-surprise samples from replay buffer for training mix"""
+        if not hasattr(self, 'replay_store') or self.replay_store is None:
+            return []
+
+        try:
+            # Sample using priority (surprise-weighted)
+            experiences = self.replay_store.sample(k=k, strategy="priority")
+            replay_data = []
+
+            for exp in experiences:
+                # Reconstruct graph from stored metadata if possible
+                code = exp.metadata.get('source_code', '')
+                if code:
+                    try:
+                        from nerion_digital_physicist.agent.data import create_graph_data_from_source
+                        graph = create_graph_data_from_source(code)
+                        label = exp.metadata.get('ground_truth', 4)
+                        replay_data.append((graph, label))
+                    except Exception:
+                        continue
+
+            if replay_data:
+                logger.info(f"🎲 Using {len(replay_data)} surprise-weighted replay samples")
+            return replay_data
+        except Exception as e:
+            logger.debug(f"Could not get replay samples: {e}")
+            return []
+
+    def _maybe_run_maml_update(self):
+        """Run MAML meta-training if we have enough examples per error type"""
+        if not self.enable_maml or not hasattr(self, 'maml_trainer'):
+            return
+
+        min_examples = self.maml_config.support_size + self.maml_config.query_size
+
+        # Create tasks from error types that have enough examples
+        tasks = []
+        for error_type, examples in self.error_type_examples.items():
+            if len(examples) >= min_examples:
+                import random
+                shuffled = examples.copy()
+                random.shuffle(shuffled)
+
+                support = shuffled[:self.maml_config.support_size]
+                query = shuffled[self.maml_config.support_size:min_examples]
+
+                task = MAMLTask(
+                    task_id=f"error_{error_type}",
+                    support_graphs=[g for g, _ in support],
+                    support_labels=[l for _, l in support],
+                    query_graphs=[g for g, _ in query],
+                    query_labels=[l for _, l in query],
+                    metadata={'error_type': error_type}
+                )
+                tasks.append(task)
+
+        # Run meta-training if we have at least 2 tasks
+        if len(tasks) >= 2:
+            logger.info(f"🎯 Running MAML meta-training with {len(tasks)} tasks")
+            try:
+                self.maml_trainer.meta_train(tasks, epochs=10)
+                self.maml_trainer.save_checkpoint(self.maml_checkpoint_path)
+                logger.info("📚 MAML checkpoint saved")
+            except Exception as e:
+                logger.warning(f"MAML meta-training failed: {e}")
+
+    def adapt_to_new_bug_type(self, support_examples: List[Tuple[Any, int]]) -> Optional[torch.nn.Module]:
+        """
+        Quickly adapt the model to a new bug type using MAML few-shot learning.
+
+        Args:
+            support_examples: List of (graph, label) tuples for the new bug type
+
+        Returns:
+            Adapted model or None if MAML not available
+        """
+        if not self.enable_maml or not hasattr(self, 'maml_trainer'):
+            logger.warning("MAML not available for few-shot adaptation")
+            return None
+
+        if len(support_examples) < 1:
+            logger.warning("Need at least 1 example for few-shot adaptation")
+            return None
+
+        logger.info(f"🚀 Adapting to new bug type with {len(support_examples)} examples")
+        try:
+            adapted_model = self.maml_trainer.adapt_to_new_task(
+                support_examples=support_examples,
+                num_steps=5  # Quick adaptation
+            )
+            return adapted_model
+        except Exception as e:
+            logger.error(f"Few-shot adaptation failed: {e}")
+            return None
 
     def _load_or_create_model(self):
         from nerion_digital_physicist.agent.brain import CodeGraphGCN
         import os
-        model_path = "/Users/ed/Nerion-V2/models/nerion_immune_brain.pt"
+        
+        # Dynamic path relative to project root
+        project_root = Path(__file__).parent.parent
+        model_path = project_root / "models" / "nerion_immune_brain.pt"
+        
         if os.path.exists(model_path):
             try:
                 model = CodeGraphGCN(num_node_features=800, hidden_channels=256, num_classes=5, num_layers=4)
@@ -399,7 +616,10 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
 
     def _save_model(self):
         import os
-        model_path = "/Users/ed/Nerion-V2/models/nerion_immune_brain.pt"
+        
+        project_root = Path(__file__).parent.parent
+        model_path = project_root / "models" / "nerion_immune_brain.pt"
+        
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         torch.save(self.model.state_dict(), model_path)
         self._save_learning_history()
@@ -407,7 +627,9 @@ Return ONLY the corrected Python code for the ENTIRE file. No explanations, no m
     def _save_learning_history(self):
         """Save raw learning examples to JSON for audit"""
         import json
-        history_path = "/Users/ed/Nerion-V2/models/learning_history.json"
+        
+        project_root = Path(__file__).parent.parent
+        history_path = project_root / "models" / "learning_history.json"
         
         new_entries = []
         for ex in self.learning_examples:
@@ -529,6 +751,26 @@ Return ONLY the optimized Python code."""
 
     def _evolve_quality(self, target_path: str) -> bool:
         """Vector 2: Code Quality & Refactoring"""
+        target_path_obj = Path(target_path)
+        if target_path_obj.is_dir():
+            # Pick a random python file that isn't a test and not in excluded dirs
+            excluded_dirs = {".git", ".venv", "venv", "env", "__pycache__", "node_modules", "tmp", "temp", "build", "dist"}
+            
+            candidates = []
+            for p in target_path_obj.rglob("*.py"):
+                # Check if any part of the path is in excluded_dirs
+                if any(part in excluded_dirs for part in p.parts):
+                    continue
+                if "test" in p.name:
+                    continue
+                candidates.append(str(p))
+                
+            if not candidates:
+                logger.warning("No suitable Python files found for evolution.")
+                return False
+            import random
+            target_path = random.choice(candidates)
+            
         logger.info("=" * 60)
         logger.info(f"🧬 EVOLVER (QUALITY) - Target: {target_path}")
         logger.info("=" * 60)

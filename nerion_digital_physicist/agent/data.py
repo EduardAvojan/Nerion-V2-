@@ -17,6 +17,7 @@ from .semantics import SemanticEmbedder, get_global_embedder
 LOGIC_PATH = Path(__file__).resolve().parent.parent / "environment" / "logic_v2.py"
 
 # Edge roles captured in the graph; expand as new semantics are modelled.
+# Updated to include causal edge types for causal reasoning
 EDGE_ROLE_TO_INDEX: Dict[str, int] = {
     "sequence": 0,
     "call": 1,
@@ -24,6 +25,11 @@ EDGE_ROLE_TO_INDEX: Dict[str, int] = {
     "control_flow": 3,
     "data_flow": 4,
     "contains": 5,
+    # Causal edge types (Phase 2 integration)
+    "causal_data": 6,      # Variable causes variable (data dependency)
+    "causal_control": 7,   # Condition causes branch
+    "state_change": 8,     # Mutation causes state change
+    "exception_flow": 9,   # Exception propagation
 }
 
 
@@ -74,10 +80,11 @@ def _collect_function_facts(node: ast.FunctionDef | ast.AsyncFunctionDef, source
     doc_len = len(docstring.strip())
     body_nodes = list(ast.walk(node))
 
-    branch_nodes = sum(
-        isinstance(n, (ast.If, ast.For, ast.While, ast.Try, ast.With, ast.Match, ast.BoolOp))
-        for n in body_nodes
-    )
+    # Branch types - use getattr for Python 3.10+ Match support
+    branch_types = (ast.If, ast.For, ast.While, ast.Try, ast.With, ast.BoolOp)
+    if hasattr(ast, 'Match'):
+        branch_types = (*branch_types, ast.Match)
+    branch_nodes = sum(isinstance(n, branch_types) for n in body_nodes)
     call_nodes: List[Tuple[str, ast.Call]] = []
     return_nodes = sum(isinstance(n, ast.Return) for n in body_nodes)
 
@@ -519,6 +526,44 @@ def _build_graph_from_ast(
             for reader in readers:
                 if writer != reader:
                     _add_edge_with_role(graph, writer, reader, "data_flow")
+                    # Also add causal data edge (Phase 2: Causal GNN)
+                    _add_edge_with_role(graph, writer, reader, "causal_data")
+
+    # Phase 2: Add causal edges for control structures
+    for node_name in graph.nodes():
+        node_data = graph.nodes[node_name]
+        node_type = node_data.get("node_type", "")
+
+        # If statements: condition causally determines branches
+        if node_type == "if_stmt":
+            # Find nested statements and add causal_control edges
+            for target_name in graph.nodes():
+                # Check if target is contained by this if
+                if graph.has_edge(node_name, target_name):
+                    edge_data = graph[node_name][target_name]
+                    if "contains" in edge_data.get("edge_roles", []):
+                        _add_edge_with_role(graph, node_name, target_name, "causal_control")
+
+        # Assignments: cause state changes
+        elif node_type == "assign":
+            node_metadata = node_data.get("metadata", {})
+            writes = node_metadata.get("writes", [])
+            if writes:
+                # Assignment causes state change
+                # Find any subsequent readers of this variable
+                for sym in writes:
+                    readers = symbol_readers.get(str(sym), set())
+                    for reader in readers:
+                        if reader != node_name:
+                            _add_edge_with_role(graph, node_name, reader, "state_change")
+
+        # Try blocks: exception flow
+        elif node_type == "try_block":
+            for target_name in graph.nodes():
+                if graph.has_edge(node_name, target_name):
+                    edge_data = graph[node_name][target_name]
+                    if "contains" in edge_data.get("edge_roles", []):
+                        _add_edge_with_role(graph, node_name, target_name, "exception_flow")
 
     # Ensure metadata collections are JSON-serialisable downstream
     for node_name in graph.nodes():
