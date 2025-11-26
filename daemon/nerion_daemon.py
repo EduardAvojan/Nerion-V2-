@@ -29,10 +29,9 @@ MIN_INTERVAL_SECONDS = 3600  # 1 hour
 MAX_INTERVAL_SECONDS = 14400 # 4 hours
 DO_NOT_DISTURB_FILE = "NERION_DND"
 
-# Evolution Vectors
+# Evolution Vectors (equal weight for balanced training)
 VECTORS = [
     "evolve_quality",
-    "evolve_quality", # Higher weight for quality
     "evolve_types",
     "evolve_security",
     "evolve_perf"
@@ -124,15 +123,22 @@ def run_evolution_cycle(root_dir: str = "."):
             cmd,
             capture_output=True,
             text=True,
-            cwd=os.getcwd()
+            cwd=os.getcwd(),
+            timeout=300  # 5 minute timeout to prevent hanging
         )
-        
+
         if result.returncode == 0:
             logger.info(f"✅ Evolution Successful: {vector} on {target_file}")
-            logger.info(f"Output:\n{result.stdout}")
+            if result.stdout.strip():
+                logger.info(f"Output:\n{result.stdout}")
+            if result.stderr.strip():
+                logger.info(f"Logs:\n{result.stderr}")
         else:
             logger.error(f"❌ Evolution Failed: {vector} on {target_file}")
             logger.error(f"Error:\n{result.stderr}")
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"⏰ Evolution Timeout: {vector} on {target_file} (exceeded 5 min)")
             
     except Exception as e:
         logger.error(f"💥 Daemon Exception: {e}")

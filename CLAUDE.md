@@ -145,6 +145,45 @@ Current approach: Learn incrementally from **real LLM fixes on real open source 
 
 ## Current State
 
+### Verified Metrics (as of Nov 24, 2025)
+
+**New Integrated System (Phase 1-6 Complete):**
+| Metric | Value | Source |
+|--------|-------|--------|
+| Learning Examples | 36 | `models/learning_history.json` |
+| Episodic Episodes | 89 | `data/episodic_memory/episodes.jsonl` |
+| Bug Fix Success Rate | 100% | `data/episodic_memory/principles.json` |
+| Contrastive Epochs | 5 | `models/contrastive_history.json` |
+| Contrastive Loss | 1.29 → 0.39 | `models/contrastive_history.json` |
+
+**Learning Distribution:**
+- maintainability: 16 examples
+- dependency_management: 9 examples
+- injection_prevention: 7 examples
+- performance_optimization: 4 examples
+
+**Integration Status:**
+
+*Learning Layer:*
+- ✅ MAML few-shot adaptation (wired in universal_fixer.py)
+- ✅ Surprise-weighted replay (wired in universal_fixer.py)
+- ✅ Chain-of-Thought reasoning (ExplainablePlanner)
+- ✅ Episodic Memory with RAG recall
+- ✅ Causal edge types in graph creation
+
+*Perception Layer (Nov 24, 2025):*
+- ✅ ArchitecturalGraphBuilder - repo-wide dependency graphs
+- ✅ PatternDetector - detects MVC, Repository, Factory, Observer, Layered patterns
+- ✅ KnowledgeGraph - persistent relationship storage
+- ✅ CausalAnalyzer - root cause analysis, bottleneck detection, cycle detection
+- ✅ Combined insights in `_get_model_insight()` (GNN + perception)
+- ✅ Causal root cause added to fix prompts
+
+**Legacy (Old Synthetic Curriculum - Abandoned):**
+| Metric | Value | Notes |
+|--------|-------|-------|
+| GNN Accuracy | 61.85% | Oct 2025 - maxed out on synthetic data |
+
 ### Training Status
 Check live status with the gym monitor:
 ```bash
@@ -154,7 +193,8 @@ python scripts/gym_monitor.py
 Key metrics stored in `/Users/ed/Nerion-V2/models/`:
 - `online_learner_state.pt` - GNN checkpoint with EWC state
 - `nerion_immune_brain.pt` - Current trained brain
-- `learning_history.json` - Raw learning examples
+- `learning_history.json` - Raw learning examples (36 entries)
+- `digital_physicist_brain.meta.json` - Model metadata with accuracy
 
 Episodic memory at `/Users/ed/Nerion-V2/data/episodic_memory/`
 
@@ -178,13 +218,27 @@ Real open source projects in `training_ground/`:
 │   └── nerion_daemon.py          # Immune system daemon (--gym mode)
 │
 ├── nerion_digital_physicist/
-│   ├── universal_fixer.py        # Main LLM-powered fixer (984 lines)
+│   ├── universal_fixer.py        # Main LLM-powered fixer (1645 lines)
+│   │
 │   ├── agent/
 │   │   ├── brain.py              # GNN architectures (GCN, SAGE, GAT, GIN)
 │   │   ├── data.py               # Code → PyG graph conversion
+│   │   ├── causal_analyzer.py    # Root cause analysis, test prediction
 │   │   └── semantics.py          # CodeBERT/GraphCodeBERT embeddings
+│   │
+│   ├── architecture/             # Perception Layer
+│   │   ├── graph_builder.py      # ArchitecturalGraphBuilder (519 lines)
+│   │   └── pattern_detector.py   # PatternDetector (444 lines)
+│   │
+│   ├── infrastructure/
+│   │   └── knowledge_graph.py    # KnowledgeGraph with NetworkX
+│   │
+│   ├── reasoning/
+│   │   └── causal_graph.py       # CausalGraph data structures
+│   │
 │   ├── training/
 │   │   └── online_learner.py     # EWC incremental learning
+│   │
 │   └── memory/
 │       └── episodic_memory.py    # Experience storage & consolidation
 │
@@ -203,7 +257,8 @@ Real open source projects in `training_ground/`:
 │   └── learning_history.json     # Training examples log
 │
 ├── data/
-│   └── episodic_memory/          # Experience episodes
+│   ├── episodic_memory/          # Experience episodes
+│   └── knowledge_graph.graphml   # Persistent relationship storage
 │
 ├── app/                          # Application layer (chat, UI, voice)
 ├── selfcoder/                    # Self-modification engine
@@ -293,6 +348,14 @@ NERION_V2_GEMINI_KEY=<your_key>   # For embeddings (optional)
 - Include timestamp (YYYY-MM-DD HH:MM PST/PDT)
 - Delete entries older than 7 days
 - Do NOT add fictional or planned features
+
+### Code Editing Guidelines
+**Purpose:** Maintain clean, professional code.
+
+**Rules:**
+- NEVER hardcode planning nomenclature (Phase 0, Phase 1, etc.) into code files
+- Code should describe what it does functionally, not reference the planning process
+- Comments should explain WHY or HOW, not "this was added in Phase X"
 
 ---
 

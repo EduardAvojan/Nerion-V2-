@@ -248,14 +248,22 @@ class SemanticEmbedder:
                     _GRAPHCODEBERT_TOKENIZER = AutoTokenizer.from_pretrained(str(bundled_model_path))
                     _GRAPHCODEBERT_MODEL = AutoModel.from_pretrained(str(bundled_model_path))
                 else:
-                    # Fallback: Download from HuggingFace (first-time only)
-                    print("Bundled GraphCodeBERT not found. Downloading from microsoft/graphcodebert-base...")
-                    print("(This is a one-time download. Bundle weights for offline use.)")
+                    # Load from HuggingFace (uses cache after first download)
+                    print("Loading GraphCodeBERT from HuggingFace cache...")
                     _GRAPHCODEBERT_TOKENIZER = AutoTokenizer.from_pretrained("microsoft/graphcodebert-base")
                     _GRAPHCODEBERT_MODEL = AutoModel.from_pretrained("microsoft/graphcodebert-base")
 
-                _GRAPHCODEBERT_MODEL.eval()  # Set to evaluation mode
-                print("✅ GraphCodeBERT model loaded successfully!")
+                    # Save locally for even faster loading
+                    try:
+                        bundled_model_path.mkdir(parents=True, exist_ok=True)
+                        _GRAPHCODEBERT_TOKENIZER.save_pretrained(str(bundled_model_path))
+                        _GRAPHCODEBERT_MODEL.save_pretrained(str(bundled_model_path))
+                        print(f"💾 Saved to {bundled_model_path}")
+                    except Exception:
+                        pass  # Not critical if save fails
+
+                _GRAPHCODEBERT_MODEL.train(False)  # Set to evaluation mode
+                print("✅ GraphCodeBERT loaded!")
             except Exception as e:
                 print(f"Failed to load GraphCodeBERT: {e}. Falling back to hash embedding.")
                 return self._hash_embedding(text)

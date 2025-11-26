@@ -571,6 +571,69 @@ class EpisodicMemory:
         }
         self.principles_file.write_text(json.dumps(data, indent=2))
 
+    def get_applicable_principles(
+        self,
+        task_type: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        min_confidence: float = 0.5,
+        limit: int = 5
+    ) -> List[ConsolidatedPrinciple]:
+        """
+        Retrieve principles applicable to a given task.
+
+        Args:
+            task_type: Type of task (e.g., "bug_fix", "refactoring")
+            tags: Tags to match against principle source episodes
+            min_confidence: Minimum confidence threshold
+            limit: Maximum principles to return
+
+        Returns:
+            List of applicable ConsolidatedPrinciple objects
+        """
+        applicable = []
+
+        for principle in self.principles.values():
+            # Filter by confidence
+            if principle.confidence < min_confidence:
+                continue
+
+            # Check if principle matches task type
+            if task_type:
+                # Check if any source episode matches task type
+                matches_type = False
+                for ep_id in principle.source_episodes[:10]:  # Check first 10
+                    if ep_id in self.episode_index:
+                        ep = self.episode_index[ep_id]
+                        if task_type.lower() in ep.episode_type.value.lower():
+                            matches_type = True
+                            break
+                        # Also check tags
+                        if task_type.lower() in [t.lower() for t in ep.tags]:
+                            matches_type = True
+                            break
+                if not matches_type and task_type.lower() not in principle.description.lower():
+                    continue
+
+            # Check tag matching if provided
+            if tags:
+                tag_match = False
+                for ep_id in principle.source_episodes[:10]:
+                    if ep_id in self.episode_index:
+                        ep = self.episode_index[ep_id]
+                        if any(t.lower() in [et.lower() for et in ep.tags] for t in tags):
+                            tag_match = True
+                            break
+                # Softer match - if no tag match found, still include general principles
+                if not tag_match and principle.applicability != "general":
+                    continue
+
+            applicable.append(principle)
+
+        # Sort by confidence (highest first)
+        applicable.sort(key=lambda p: p.confidence, reverse=True)
+
+        return applicable[:limit]
+
     def _episode_to_dict(self, episode: Episode) -> Dict[str, Any]:
         """Convert episode to dictionary"""
         d = asdict(episode)

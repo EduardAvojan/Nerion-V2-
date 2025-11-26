@@ -287,18 +287,45 @@ class OnlineLearner:
         # Prepare PyG Data objects
         from torch_geometric.loader import DataLoader
         from torch_geometric.data import Data
-        
+
         processed_data = []
+        skipped = 0
         for graph, label in mixed_data:
-            # Ensure graph is a Data object and has y
+            # Ensure graph is a Data object with valid structure
             if not isinstance(graph, Data):
-                # Fallback if graph is not Data (should not happen with current setup)
+                skipped += 1
                 continue
-            
+
+            # Skip graphs with too few nodes (causes batching issues)
+            if not hasattr(graph, 'x') or graph.x is None or graph.x.size(0) < 1:
+                skipped += 1
+                continue
+
+            # Skip graphs with no edges
+            if not hasattr(graph, 'edge_index') or graph.edge_index is None or graph.edge_index.size(1) < 1:
+                skipped += 1
+                continue
+
             # Clone to avoid modifying original
             data = graph.clone()
             data.y = torch.tensor([label], dtype=torch.long)
             processed_data.append(data)
+
+        if skipped > 0:
+            print(f"[OnlineLearner] Skipped {skipped} invalid graphs")
+
+        if len(processed_data) < 1:
+            print(f"[OnlineLearner] No valid graphs to train on!")
+            return current_model, IncrementalUpdate(
+                task_id=self.task_count,
+                num_new_samples=0,
+                num_replay_samples=0,
+                new_accuracy=0.0,
+                old_accuracy=0.0,
+                forgetting=0.0,
+                task_loss=0.0,
+                ewc_loss=0.0
+            )
 
         # Create PyG data loader
         data_loader = DataLoader(
@@ -306,6 +333,23 @@ class OnlineLearner:
             batch_size=self.config.batch_size,
             shuffle=True
         )
+
+        # Compute class weights for imbalanced data (use processed_data, not mixed_data)
+        # Weight = total_samples / (num_classes * class_count)
+        from collections import Counter
+        label_counts = Counter(data.y.item() for data in processed_data)
+        num_classes = 20  # Fixed number of classes
+        total_samples = len(processed_data)
+
+        class_weights = torch.ones(num_classes, device=self.device)
+        for label, count in label_counts.items():
+            if 0 <= label < num_classes:
+                # Inverse frequency weighting
+                class_weights[label] = total_samples / (len(label_counts) * count)
+
+        # Normalize weights to sum to num_classes
+        class_weights = class_weights * num_classes / class_weights.sum()
+        print(f"[OnlineLearner] Class weights: {dict(sorted(label_counts.items()))}")
 
         # Training loop
         total_task_loss = 0.0
@@ -322,11 +366,23 @@ class OnlineLearner:
 
                 # Forward pass with correct signature
                 # Extract GraphCodeBERT embeddings if available
+                # NOTE: PyG batching can cause issues with graphcodebert_embedding
+                # Only use it if dimensions match exactly
                 graphcodebert_emb = None
-                if hasattr(batch, 'graphcodebert_embedding'):
-                    num_graphs = batch.num_graphs
-                    graphcodebert_emb = batch.graphcodebert_embedding.view(num_graphs, -1)
-                
+                num_graphs = batch.num_graphs
+                if hasattr(batch, 'graphcodebert_embedding') and batch.graphcodebert_embedding is not None:
+                    try:
+                        emb = batch.graphcodebert_embedding
+                        # Check if we have exactly num_graphs * 768 elements
+                        expected_size = num_graphs * 768
+                        if emb.numel() == expected_size:
+                            graphcodebert_emb = emb.view(num_graphs, 768)
+                        else:
+                            # Dimension mismatch - don't use graphcodebert
+                            graphcodebert_emb = None
+                    except Exception:
+                        graphcodebert_emb = None
+
                 edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
 
                 logits = model(
@@ -336,11 +392,11 @@ class OnlineLearner:
                     graphcodebert_embedding=graphcodebert_emb,
                     edge_attr=edge_attr
                 )
-                
+
                 labels = batch.y.view(-1)
 
-                # Task loss
-                task_loss = F.cross_entropy(logits, labels)
+                # Task loss with class weighting for imbalanced data
+                task_loss = F.cross_entropy(logits, labels, weight=class_weights)
 
                 # EWC penalty
                 ewc_loss = self.ewc_penalty(model)
